@@ -95,9 +95,9 @@ def init_extensions(app: Flask):
 
 def register_routes(app: Flask):
 
-    from app.api import api
+    from app.api import init_app
 
-    api.init_app(app)
+    init_app(app)
 
 
 # --------------------------------------------------
