@@ -11,7 +11,7 @@ from wtforms.validators import (
 
 from flask_wtf.file import FileField, FileAllowed
 
-from app.models import User, TicketStatus, TicketPriority
+from app.models import db, User, UserRole, TicketStatus, TicketPriority
 
 
 # ----------------------------------------------------
@@ -63,12 +63,28 @@ class RegisterForm(FlaskForm):
         validators=[DataRequired()]
     )
 
+    manager_id = StringField(
+        "manager_id",
+        validators=[Optional()]
+    )
+
     def validate_email(self, field):
-
-        user = User.query.filter_by(email=field.data).first()
-
+        user = db.session.execute(
+            db.select(User).filter_by(email=field.data)
+        ).scalar_one_or_none()
         if user:
             raise ValidationError("Email already registered.")
+
+    def validate_manager_id(self, field):
+        if not field.data:
+            return
+        if self.role.data != UserRole.TENANT.value:
+            raise ValidationError("Only tenants can be assigned to a manager.")
+        manager = db.session.get(User, field.data)
+        if not manager:
+            raise ValidationError("Manager not found.")
+        if not manager.is_manager():
+            raise ValidationError("Specified user is not a manager.")
 
 
 class LoginForm(FlaskForm):
@@ -144,7 +160,7 @@ class AssignTechnicianForm(FlaskForm):
 
     def validate_technician_id(self, field):
 
-        technician = User.query.get(field.data)
+        technician = db.session.get(User, field.data)
 
         if not technician:
             raise ValidationError("Technician not found.")
