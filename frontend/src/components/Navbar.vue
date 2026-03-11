@@ -1,0 +1,117 @@
+<script setup>
+import { ref } from 'vue'
+import { RouterLink } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+
+const auth = useAuthStore()
+const mobileOpen = ref(false)
+</script>
+
+<template>
+  <nav class="border-b border-[var(--color-border-default)] bg-[var(--color-bg-card)]">
+    <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+      <div class="flex h-16 items-center justify-between">
+
+        <!-- Logo / Brand -->
+        <RouterLink to="/" class="flex items-center gap-2 text-xl font-bold tracking-tight text-primary-600">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            <polyline points="9 22 9 12 15 12 15 22" />
+          </svg>
+          EstatePilot
+        </RouterLink>
+
+        <!-- Desktop nav links -->
+        <div class="hidden items-center gap-3 md:flex">
+          <!-- Logged-out links -->
+          <template v-if="!auth.isAuthenticated">
+            <RouterLink
+              to="/login"
+              class="rounded-lg px-4 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-primary)]"
+            >
+              Log in
+            </RouterLink>
+
+            <RouterLink
+              to="/register"
+              class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-primary-700"
+            >
+              Register
+            </RouterLink>
+          </template>
+
+          <!-- Logged-in links -->
+          <template v-else>
+            <RouterLink
+              to="/dashboard"
+              class="rounded-lg px-4 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-primary)]"
+            >
+              Dashboard
+            </RouterLink>
+
+            <span class="text-sm text-[var(--color-text-muted)]">{{ auth.user?.name }}</span>
+
+            <button
+              @click="auth.logout()"
+              class="rounded-lg border border-[var(--color-border-default)] px-4 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-danger-50 hover:text-danger-600"
+            >
+              Log out
+            </button>
+          </template>
+        </div>
+
+        <!-- Mobile hamburger -->
+        <button
+          class="inline-flex items-center justify-center rounded-lg p-2 text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-elevated)] md:hidden"
+          @click="mobileOpen = !mobileOpen"
+          aria-label="Toggle menu"
+        >
+          <svg v-if="!mobileOpen" xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+          <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Mobile menu -->
+    <div v-if="mobileOpen" class="border-t border-[var(--color-border-default)] px-4 pb-4 pt-2 md:hidden">
+      <template v-if="!auth.isAuthenticated">
+        <RouterLink
+          to="/login"
+          class="block rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-primary)]"
+          @click="mobileOpen = false"
+        >
+          Log in
+        </RouterLink>
+
+        <RouterLink
+          to="/register"
+          class="mt-1 block rounded-lg bg-primary-600 px-3 py-2 text-center text-sm font-medium text-white transition hover:bg-primary-700"
+          @click="mobileOpen = false"
+        >
+          Register
+        </RouterLink>
+      </template>
+
+      <template v-else>
+        <RouterLink
+          to="/dashboard"
+          class="block rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-primary)]"
+          @click="mobileOpen = false"
+        >
+          Dashboard
+        </RouterLink>
+
+        <button
+          @click="auth.logout(); mobileOpen = false"
+          class="mt-1 block w-full rounded-lg border border-[var(--color-border-default)] px-3 py-2 text-center text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-danger-50 hover:text-danger-600"
+        >
+          Log out
+        </button>
+      </template>
+    </div>
+  </nav>
+</template>
