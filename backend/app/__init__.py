@@ -52,6 +52,13 @@ def create_app() -> Flask:
     init_extensions(app)
 
     # -----------------------------------------------
+    # Create tables (dev convenience — migrations are authoritative)
+    # -----------------------------------------------
+
+    with app.app_context():
+        db.create_all()
+
+    # -----------------------------------------------
     # Register Blueprints / APIs
     # -----------------------------------------------
 
