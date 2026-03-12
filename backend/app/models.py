@@ -1,4 +1,3 @@
-
 import enum
 from uuid import uuid4
 from datetime import datetime
@@ -30,6 +29,12 @@ class TicketPriority(enum.Enum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+
+
+class InvitationStatus(enum.Enum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
 
 
 # ---------------------------------------------------
@@ -99,9 +104,13 @@ class User(db.Model):
     def get_managed_tickets(self):
         """Manager fetches tickets created by their tenants (derived, not stored)."""
         return (
-            Ticket.query
-            .join(User, Ticket.created_by == User.id)
-            .filter(User.manager_id == self.id)
+            db.session.execute(
+                db.select(Ticket)
+                .join(User, Ticket.created_by == User.id)
+                .filter(User.manager_id == self.id)
+                .order_by(Ticket.created_at.desc())
+            )
+            .scalars()
             .all()
         )
 
@@ -279,3 +288,57 @@ class Notification(db.Model):
 
     def mark_read(self):
         self.is_read = True
+
+
+# ---------------------------------------------------
+# MANAGER REQUESTS
+# ---------------------------------------------------
+
+class ManagementInvitation(db.Model):
+    __tablename__ = "management_invitations"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid4()))
+
+    manager_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False)
+    tenant_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False)
+
+    status = db.Column(
+        db.Enum(InvitationStatus, name="invitation_status"),
+        default=InvitationStatus.PENDING, nullable=False,
+    )
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    manager_user = db.relationship("User", foreign_keys=[manager_id], backref="sent_invitations")
+    tenant_user = db.relationship("User", foreign_keys=[tenant_id], backref="received_invitations")
+
+    __table_args__ = (
+        db.UniqueConstraint("manager_id", "tenant_id", name="uq_management_invitation"),
+        db.Index("ix_mgmt_invitation_manager", "manager_id"),
+        db.Index("ix_mgmt_invitation_tenant", "tenant_id"),
+        db.Index("ix_mgmt_invitation_status", "status"),
+    )
+
+    def accept(self):
+        if self.status != InvitationStatus.PENDING:
+            raise ValueError("Can only accept a pending invitation.")
+        self.status = InvitationStatus.ACCEPTED
+        self.tenant_user.manager_id = self.manager_id
+        Notification.create(
+            user_id=self.manager_id,
+            message=f"{self.tenant_user.name} accepted your management request.",
+        )
+
+    def reject(self):
+        if self.status != InvitationStatus.PENDING:
+            raise ValueError("Can only reject a pending invitation.")
+        self.status = InvitationStatus.REJECTED
+        Notification.create(
+            user_id=self.manager_id,
+            message=f"{self.tenant_user.name} rejected your management request.",
+        )
+
+    def __repr__(self):
+        return f"<ManagementInvitation {self.manager_id} → {self.tenant_id} ({self.status.value})>"

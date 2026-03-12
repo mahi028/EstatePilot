@@ -11,7 +11,7 @@ from wtforms.validators import (
 
 from flask_wtf.file import FileField, FileAllowed
 
-from app.models import db, User, UserRole, TicketStatus, TicketPriority
+from app.models import db, User, UserRole, TicketStatus, TicketPriority, ManagementInvitation, InvitationStatus
 
 
 # ----------------------------------------------------
@@ -157,6 +157,27 @@ class AssignTechnicianForm(FlaskForm):
         "technician_id",
         validators=[DataRequired()]
     )
+
+
+# ----------------------------------------------------
+# MANAGER REQUEST
+# ----------------------------------------------------
+
+class SendInvitationForm(FlaskForm):
+
+    tenant_id = StringField(
+        "tenant_id",
+        validators=[DataRequired()]
+    )
+
+    def validate_tenant_id(self, field):
+        tenant = db.session.get(User, field.data)
+        if not tenant:
+            raise ValidationError("Tenant not found.")
+        if not tenant.is_tenant():
+            raise ValidationError("Target user is not a tenant.")
+        if tenant.manager_id:
+            raise ValidationError("Tenant already has a manager.")
 
     def validate_technician_id(self, field):
 
