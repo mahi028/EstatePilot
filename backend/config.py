@@ -61,7 +61,7 @@ class Config:
 
     UPLOAD_FOLDER = os.getenv(
         "UPLOAD_FOLDER",
-        "application/static/upload"
+        "app/static/upload"
     )
 
     MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10MB

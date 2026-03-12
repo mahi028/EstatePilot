@@ -23,7 +23,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="py-10">
+  <div class="py-4 sm:py-6 lg:py-8">
     <!-- Loading state -->
     <div v-if="loading" class="text-center text-[var(--color-text-muted)]">Loading...</div>
 
@@ -32,11 +32,11 @@ onMounted(async () => {
 
     <!-- Dashboard content -->
     <div v-else>
-      <div class="mb-8">
-        <h1 class="text-3xl font-bold text-[var(--color-text-primary)]">
+      <div class="mb-4 sm:mb-6 lg:mb-8">
+        <h1 class="text-2xl font-bold text-[var(--color-text-primary)] sm:text-3xl">
           Welcome, {{ auth.user?.name }}
         </h1>
-        <p class="mt-1 text-[var(--color-text-secondary)]">Here's your dashboard overview.</p>
+        <p class="mt-1 text-sm text-[var(--color-text-secondary)] sm:text-base">Here's your dashboard overview.</p>
       </div>
 
       <ManagerDashboard v-if="role === 'manager'" />

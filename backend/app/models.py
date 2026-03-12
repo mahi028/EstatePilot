@@ -8,6 +8,13 @@ from werkzeug.security import generate_password_hash, check_password_hash
 db = SQLAlchemy()
 
 
+technician_service_links = db.Table(
+    "technician_service_links",
+    db.Column("technician_id", db.String(36), db.ForeignKey("users.id"), primary_key=True),
+    db.Column("service_id", db.String(36), db.ForeignKey("technician_services.id"), primary_key=True),
+)
+
+
 # ---------------------------------------------------
 # ENUMS
 # ---------------------------------------------------
@@ -23,6 +30,7 @@ class TicketStatus(enum.Enum):
     ASSIGNED = "assigned"
     IN_PROGRESS = "in_progress"
     DONE = "done"
+    INVALID = "invalid"
 
 
 class TicketPriority(enum.Enum):
@@ -49,6 +57,13 @@ class User(db.Model):
     email = db.Column(db.String(255), nullable=False, unique=True)
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.Enum(UserRole, name="user_roles"), nullable=False)
+    profile_image_path = db.Column(db.String(500), nullable=True)
+    phone = db.Column(db.String(40), nullable=True)
+    location = db.Column(db.String(120), nullable=True)
+    bio = db.Column(db.Text, nullable=True)
+    years_experience = db.Column(db.Integer, nullable=True)
+    base_price = db.Column(db.Float, nullable=True)
+    technician_headline = db.Column(db.String(180), nullable=True)
 
     # Self-referential FK: tenants point to their manager
     manager_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=True)
@@ -69,6 +84,25 @@ class User(db.Model):
         "Ticket", foreign_keys="Ticket.assigned_to", backref="technician", lazy=True
     )
     notifications = db.relationship("Notification", backref="user", lazy=True)
+    services = db.relationship(
+        "TechnicianService",
+        secondary=technician_service_links,
+        lazy="subquery",
+        backref=db.backref("technicians", lazy=True),
+    )
+    received_reviews = db.relationship(
+        "TechnicianReview",
+        foreign_keys="TechnicianReview.technician_id",
+        backref="technician_user",
+        lazy=True,
+        cascade="all, delete-orphan",
+    )
+    given_reviews = db.relationship(
+        "TechnicianReview",
+        foreign_keys="TechnicianReview.reviewer_id",
+        backref="reviewer_user",
+        lazy=True,
+    )
 
     __table_args__ = (
         # email already has a unique index via unique=True — no need for ix_users_email
@@ -117,6 +151,17 @@ class User(db.Model):
     def __repr__(self):
         return f"<User {self.email} ({self.role.value})>"
 
+    @property
+    def average_rating(self):
+        if not self.received_reviews:
+            return None
+        total = sum(review.rating for review in self.received_reviews)
+        return round(total / len(self.received_reviews), 2)
+
+    @property
+    def reviews_count(self):
+        return len(self.received_reviews)
+
 
 # ---------------------------------------------------
 # TICKETS
@@ -153,6 +198,9 @@ class Ticket(db.Model):
     activity_logs = db.relationship(
         "ActivityLog", backref="ticket", cascade="all, delete-orphan", lazy=True
     )
+    comments = db.relationship(
+        "TicketComment", backref="ticket", cascade="all, delete-orphan", lazy=True
+    )
 
     __table_args__ = (
         db.Index("ix_ticket_status", "status"),
@@ -166,10 +214,11 @@ class Ticket(db.Model):
     # ---------------------------------------------------
 
     VALID_TRANSITIONS = {
-        TicketStatus.OPEN: [TicketStatus.ASSIGNED],
-        TicketStatus.ASSIGNED: [TicketStatus.IN_PROGRESS],
-        TicketStatus.IN_PROGRESS: [TicketStatus.DONE],
+        TicketStatus.OPEN: [TicketStatus.ASSIGNED, TicketStatus.INVALID],
+        TicketStatus.ASSIGNED: [TicketStatus.IN_PROGRESS, TicketStatus.INVALID],
+        TicketStatus.IN_PROGRESS: [TicketStatus.DONE, TicketStatus.INVALID],
         TicketStatus.DONE: [],
+        TicketStatus.INVALID: [],
     }
 
     def can_transition(self, new_status: TicketStatus) -> bool:
@@ -211,6 +260,22 @@ class Ticket(db.Model):
         image = TicketImage(ticket_id=self.id, file_path=path)
         db.session.add(image)
 
+    def add_comment(self, user, body):
+        comment = TicketComment(ticket_id=self.id, user_id=user.id, body=body)
+        db.session.add(comment)
+        return comment
+
+    def mark_invalid(self, user):
+        if self.status != TicketStatus.INVALID:
+            old = self.status
+            self.status = TicketStatus.INVALID
+            ActivityLog.create(
+                ticket_id=self.id,
+                user_id=user.id,
+                action=f"Status changed from {old.value} → invalid",
+            )
+        return self
+
     def __repr__(self):
         return f"<Ticket {self.id} {self.status.value}>"
 
@@ -233,6 +298,81 @@ class TicketImage(db.Model):
 
     def __repr__(self):
         return f"<TicketImage {self.file_path}>"
+
+
+# ---------------------------------------------------
+# TECHNICIAN SERVICES
+# ---------------------------------------------------
+
+class TechnicianService(db.Model):
+    __tablename__ = "technician_services"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid4()))
+    code = db.Column(db.String(80), nullable=False, unique=True)
+    label = db.Column(db.String(120), nullable=False)
+    description = db.Column(db.String(255), nullable=True)
+
+    __table_args__ = (
+        db.Index("ix_technician_service_code", "code"),
+    )
+
+    def __repr__(self):
+        return f"<TechnicianService {self.code}>"
+
+
+# ---------------------------------------------------
+# TECHNICIAN REVIEWS
+# ---------------------------------------------------
+
+class TechnicianReview(db.Model):
+    __tablename__ = "technician_reviews"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid4()))
+    technician_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False)
+    reviewer_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False)
+    ticket_id = db.Column(db.String(36), db.ForeignKey("tickets.id"), nullable=True)
+    rating = db.Column(db.Integer, nullable=False)
+    comment = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    ticket = db.relationship("Ticket")
+
+    __table_args__ = (
+        db.Index("ix_technician_review_technician", "technician_id"),
+        db.Index("ix_technician_review_reviewer", "reviewer_id"),
+        db.UniqueConstraint(
+            "technician_id",
+            "reviewer_id",
+            name="uq_technician_review_once_per_reviewer",
+        ),
+    )
+
+    def __repr__(self):
+        return f"<TechnicianReview {self.technician_id} {self.rating}>"
+
+
+# ---------------------------------------------------
+# TICKET COMMENTS
+# ---------------------------------------------------
+
+class TicketComment(db.Model):
+    __tablename__ = "ticket_comments"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid4()))
+    ticket_id = db.Column(db.String(36), db.ForeignKey("tickets.id"), nullable=False)
+    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False)
+    body = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship("User")
+
+    __table_args__ = (
+        db.Index("ix_ticket_comment_ticket", "ticket_id"),
+        db.Index("ix_ticket_comment_user", "user_id"),
+    )
+
+    def __repr__(self):
+        return f"<TicketComment {self.ticket_id} {self.user_id}>"
 
 
 # ---------------------------------------------------

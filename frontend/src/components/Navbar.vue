@@ -41,6 +41,13 @@ const mobileOpen = ref(false)
           <!-- Logged-in links -->
           <template v-else>
             <RouterLink
+              :to="`/profile/${auth.user?.id}`"
+              class="rounded-lg px-4 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-primary)]"
+            >
+              Profile
+            </RouterLink>
+
+            <RouterLink
               to="/dashboard"
               class="rounded-lg px-4 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-primary)]"
             >
@@ -95,6 +102,14 @@ const mobileOpen = ref(false)
       </template>
 
       <template v-else>
+        <RouterLink
+          :to="`/profile/${auth.user?.id}`"
+          class="block rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-primary)]"
+          @click="mobileOpen = false"
+        >
+          Profile
+        </RouterLink>
+
         <RouterLink
           to="/dashboard"
           class="block rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-primary)]"

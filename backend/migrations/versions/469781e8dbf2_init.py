@@ -1,8 +1,8 @@
-"""Initial Migration
+"""init
 
-Revision ID: 4bc06c161a4a
+Revision ID: 469781e8dbf2
 Revises: 
-Create Date: 2026-03-11 00:14:22.995538
+Create Date: 2026-03-13 01:39:55.416992
 
 """
 from alembic import op
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = '4bc06c161a4a'
+revision = '469781e8dbf2'
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -24,14 +24,33 @@ def upgrade():
     sa.Column('email', sa.String(length=255), nullable=False),
     sa.Column('password_hash', sa.String(length=255), nullable=False),
     sa.Column('role', sa.Enum('TENANT', 'MANAGER', 'TECHNICIAN', name='user_roles'), nullable=False),
+    sa.Column('manager_id', sa.String(length=36), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
     sa.Column('updated_at', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['manager_id'], ['users.id'], ),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('email')
     )
     with op.batch_alter_table('users', schema=None) as batch_op:
-        batch_op.create_index('ix_users_email', ['email'], unique=False)
+        batch_op.create_index('ix_users_manager', ['manager_id'], unique=False)
         batch_op.create_index('ix_users_role', ['role'], unique=False)
+
+    op.create_table('management_invitations',
+    sa.Column('id', sa.String(length=36), nullable=False),
+    sa.Column('manager_id', sa.String(length=36), nullable=False),
+    sa.Column('tenant_id', sa.String(length=36), nullable=False),
+    sa.Column('status', sa.Enum('PENDING', 'ACCEPTED', 'REJECTED', name='invitation_status'), nullable=False),
+    sa.Column('created_at', sa.DateTime(), nullable=True),
+    sa.Column('updated_at', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['manager_id'], ['users.id'], ),
+    sa.ForeignKeyConstraint(['tenant_id'], ['users.id'], ),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('manager_id', 'tenant_id', name='uq_management_invitation')
+    )
+    with op.batch_alter_table('management_invitations', schema=None) as batch_op:
+        batch_op.create_index('ix_mgmt_invitation_manager', ['manager_id'], unique=False)
+        batch_op.create_index('ix_mgmt_invitation_status', ['status'], unique=False)
+        batch_op.create_index('ix_mgmt_invitation_tenant', ['tenant_id'], unique=False)
 
     op.create_table('notifications',
     sa.Column('id', sa.String(length=36), nullable=False),
@@ -50,7 +69,7 @@ def upgrade():
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('title', sa.String(length=200), nullable=False),
     sa.Column('description', sa.Text(), nullable=False),
-    sa.Column('status', sa.Enum('OPEN', 'ASSIGNED', 'IN_PROGRESS', 'DONE', name='ticket_status'), nullable=False),
+    sa.Column('status', sa.Enum('OPEN', 'ASSIGNED', 'IN_PROGRESS', 'DONE', 'INVALID', name='ticket_status'), nullable=False),
     sa.Column('priority', sa.Enum('LOW', 'MEDIUM', 'HIGH', name='ticket_priority'), nullable=False),
     sa.Column('created_by', sa.String(length=36), nullable=False),
     sa.Column('assigned_to', sa.String(length=36), nullable=True),
@@ -80,6 +99,20 @@ def upgrade():
         batch_op.create_index('ix_activity_ticket', ['ticket_id'], unique=False)
         batch_op.create_index('ix_activity_user', ['user_id'], unique=False)
 
+    op.create_table('ticket_comments',
+    sa.Column('id', sa.String(length=36), nullable=False),
+    sa.Column('ticket_id', sa.String(length=36), nullable=False),
+    sa.Column('user_id', sa.String(length=36), nullable=False),
+    sa.Column('body', sa.Text(), nullable=False),
+    sa.Column('created_at', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['ticket_id'], ['tickets.id'], ),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
+    with op.batch_alter_table('ticket_comments', schema=None) as batch_op:
+        batch_op.create_index('ix_ticket_comment_ticket', ['ticket_id'], unique=False)
+        batch_op.create_index('ix_ticket_comment_user', ['user_id'], unique=False)
+
     op.create_table('ticket_images',
     sa.Column('id', sa.String(length=36), nullable=False),
     sa.Column('ticket_id', sa.String(length=36), nullable=False),
@@ -100,6 +133,11 @@ def downgrade():
         batch_op.drop_index('ix_ticket_image_ticket')
 
     op.drop_table('ticket_images')
+    with op.batch_alter_table('ticket_comments', schema=None) as batch_op:
+        batch_op.drop_index('ix_ticket_comment_user')
+        batch_op.drop_index('ix_ticket_comment_ticket')
+
+    op.drop_table('ticket_comments')
     with op.batch_alter_table('activity_logs', schema=None) as batch_op:
         batch_op.drop_index('ix_activity_user')
         batch_op.drop_index('ix_activity_ticket')
@@ -117,9 +155,15 @@ def downgrade():
         batch_op.drop_index('ix_notification_read')
 
     op.drop_table('notifications')
+    with op.batch_alter_table('management_invitations', schema=None) as batch_op:
+        batch_op.drop_index('ix_mgmt_invitation_tenant')
+        batch_op.drop_index('ix_mgmt_invitation_status')
+        batch_op.drop_index('ix_mgmt_invitation_manager')
+
+    op.drop_table('management_invitations')
     with op.batch_alter_table('users', schema=None) as batch_op:
         batch_op.drop_index('ix_users_role')
-        batch_op.drop_index('ix_users_email')
+        batch_op.drop_index('ix_users_manager')
 
     op.drop_table('users')
     # ### end Alembic commands ###

@@ -1,6 +1,6 @@
 import os
 
-from flask import Flask
+from flask import Flask, send_from_directory
 from flask_cors import CORS
 from flask_wtf import CSRFProtect
 from flask_migrate import Migrate
@@ -48,6 +48,13 @@ def create_app(config_overrides=None) -> Flask:
     if config_overrides:
         app.config.update(config_overrides)
 
+    # Ensure upload folder is absolute regardless of current working directory.
+    if not os.path.isabs(app.config["UPLOAD_FOLDER"]):
+        backend_root = os.path.dirname(os.path.dirname(__file__))
+        app.config["UPLOAD_FOLDER"] = os.path.abspath(
+            os.path.join(backend_root, app.config["UPLOAD_FOLDER"])
+        )
+
     # -----------------------------------------------
     # Initialize Extensions
     # -----------------------------------------------
@@ -59,6 +66,7 @@ def create_app(config_overrides=None) -> Flask:
     # -----------------------------------------------
 
     register_routes(app)
+    register_static_routes(app)
 
     return app
 
@@ -101,6 +109,14 @@ def register_routes(app: Flask):
     from app.api import init_app
 
     init_app(app)
+
+
+def register_static_routes(app: Flask):
+
+    @app.get("/uploads/<path:filename>")
+    def uploaded_file(filename):
+        print(app.config["UPLOAD_FOLDER"])
+        return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
 
 # --------------------------------------------------

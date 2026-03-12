@@ -219,7 +219,8 @@ class UpdateStatusForm(FlaskForm):
             ("open", "Open"),
             ("assigned", "Assigned"),
             ("in_progress", "In Progress"),
-            ("done", "Done")
+            ("done", "Done"),
+            ("invalid", "Invalid")
         ],
         validators=[DataRequired()]
     )

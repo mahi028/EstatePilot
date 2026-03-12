@@ -1,6 +1,6 @@
-import pytest
 import json
-from app.models import db, User, UserRole, Ticket, TicketStatus, TicketPriority, Notification
+import pytest
+from app.models import db, User, UserRole, Ticket, TicketComment, TicketStatus, TicketPriority, Notification
 
 
 # ===================================================
@@ -9,6 +9,7 @@ from app.models import db, User, UserRole, Ticket, TicketStatus, TicketPriority,
 
 LOGIN_URL = "/api/auth/login"
 TICKETS_URL = "/api/tenant/tickets"
+MANAGED_TICKETS_URL = "/api/manager/tickets"
 NOTIFICATIONS_URL = "/api/tenant/notifications"
 
 
@@ -31,6 +32,13 @@ def patch_json(client, url, data, token=None):
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return client.patch(url, data=json.dumps(data), headers=headers)
+
+
+def delete_json(client, url, token=None):
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return client.delete(url, headers=headers)
 
 
 def _login(client, email, password="password123"):
@@ -252,6 +260,58 @@ class TestTicketDetail:
     def test_requires_auth(self, client, sample_ticket):
         resp = get_json(client, f"{TICKETS_URL}/{sample_ticket.id}")
         assert resp.status_code == 401
+
+
+class TestTenantTicketActions:
+
+    def test_add_comment(self, client, mt_token, sample_ticket):
+        resp = post_json(
+            client,
+            f"{TICKETS_URL}/{sample_ticket.id}/comments",
+            {"body": "The leak is getting worse after the weekend."},
+            mt_token,
+        )
+        assert resp.status_code == 201
+        body = resp.get_json()
+        assert body["comment"]["body"].startswith("The leak")
+        assert len(body["ticket"]["comments"]) == 1
+        assert TicketComment.query.filter_by(ticket_id=sample_ticket.id).count() == 1
+
+    def test_delete_ticket(self, client, mt_token, sample_ticket):
+        resp = delete_json(client, f"{TICKETS_URL}/{sample_ticket.id}", mt_token)
+        assert resp.status_code == 200
+        assert db.session.get(Ticket, sample_ticket.id) is None
+
+
+class TestManagerTicketActions:
+
+    def test_manager_get_detail(self, client, mgr_token, sample_ticket):
+        resp = get_json(client, f"{MANAGED_TICKETS_URL}/{sample_ticket.id}", mgr_token)
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["ticket"]["id"] == sample_ticket.id
+        assert "comments" in body["ticket"]
+
+    def test_manager_add_comment(self, client, mgr_token, sample_ticket, managed_tenant):
+        resp = post_json(
+            client,
+            f"{MANAGED_TICKETS_URL}/{sample_ticket.id}/comments",
+            {"body": "Please confirm whether access is available this afternoon."},
+            mgr_token,
+        )
+        assert resp.status_code == 201
+        body = resp.get_json()
+        assert body["comment"]["user"]["role"] == "manager"
+        tenant_notifications = Notification.query.filter_by(user_id=managed_tenant.id).all()
+        assert any("New comment on ticket" in notification.message for notification in tenant_notifications)
+
+    def test_manager_mark_invalid(self, client, mgr_token, sample_ticket, managed_tenant):
+        resp = patch_json(client, f"{MANAGED_TICKETS_URL}/{sample_ticket.id}/invalid", {}, mgr_token)
+        assert resp.status_code == 200
+        db.session.refresh(sample_ticket)
+        assert sample_ticket.status == TicketStatus.INVALID
+        tenant_notifications = Notification.query.filter_by(user_id=managed_tenant.id).all()
+        assert any("marked invalid" in notification.message for notification in tenant_notifications)
 
 
 # ===================================================

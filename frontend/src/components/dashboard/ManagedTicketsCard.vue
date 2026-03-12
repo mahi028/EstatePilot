@@ -1,24 +1,43 @@
 <script setup>
-import { ref, onMounted } from 'vue'
-import { fetchManagedTickets } from '@/services/dashboard'
+import { onMounted, ref } from 'vue'
+import TicketDetailOverlay from '@/components/dashboard/TicketDetailOverlay.vue'
+import TechnicianSearchModal from '@/components/dashboard/TechnicianSearchModal.vue'
+import {
+  addManagedTicketComment,
+  assignTechnicianToTicket,
+  fetchManagedTicketDetail,
+  fetchManagedTickets,
+  markManagedTicketInvalid,
+} from '@/services/dashboard'
 
 const tickets = ref([])
 const loading = ref(true)
 const error = ref('')
 const statusFilter = ref('')
 
-const statuses = ['', 'open', 'assigned', 'in_progress', 'done']
-const statusLabels = { '': 'All', open: 'Open', assigned: 'Assigned', in_progress: 'In Progress', done: 'Done' }
-const statusColors = {
-  open: 'bg-info-100 text-info-700',
-  assigned: 'bg-accent-100 text-accent-700',
-  in_progress: 'bg-primary-100 text-primary-700',
-  done: 'bg-success-100 text-success-700',
+const detailOpen = ref(false)
+const detailLoading = ref(false)
+const detailError = ref('')
+const detailTicket = ref(null)
+const commentSubmitting = ref(false)
+const actionSubmitting = ref(false)
+const searchModalOpen = ref(false)
+
+const statuses = ['', 'open', 'assigned', 'in_progress', 'done', 'invalid']
+const statusLabels = {
+  '': 'All',
+  open: 'Open',
+  assigned: 'Assigned',
+  in_progress: 'In Progress',
+  done: 'Done',
+  invalid: 'Invalid',
 }
-const priorityColors = {
-  low: 'bg-surface-100 text-surface-600',
-  medium: 'bg-accent-100 text-accent-700',
-  high: 'bg-danger-100 text-danger-700',
+const statusColors = {
+  open: 'bg-sky-100 text-sky-800',
+  assigned: 'bg-amber-100 text-amber-800',
+  in_progress: 'bg-blue-100 text-blue-800',
+  done: 'bg-emerald-100 text-emerald-800',
+  invalid: 'bg-rose-100 text-rose-800',
 }
 
 async function loadTickets() {
@@ -36,71 +55,150 @@ async function loadTickets() {
   }
 }
 
-function onFilterChange() {
-  loadTickets()
+async function openTicket(ticketId) {
+  detailOpen.value = true
+  detailLoading.value = true
+  detailError.value = ''
+  detailTicket.value = null
+  try {
+    const { data } = await fetchManagedTicketDetail(ticketId)
+    detailTicket.value = data.ticket
+  } catch (err) {
+    detailError.value = err.response?.data?.message || 'Failed to load ticket details.'
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+function closeTicket() {
+  detailOpen.value = false
+  detailError.value = ''
+  detailTicket.value = null
+}
+
+async function handleComment(body) {
+  if (!detailTicket.value) return
+  commentSubmitting.value = true
+  detailError.value = ''
+  try {
+    const { data } = await addManagedTicketComment(detailTicket.value.id, body)
+    detailTicket.value = data.ticket
+  } catch (err) {
+    detailError.value = err.response?.data?.message || 'Failed to add comment.'
+  } finally {
+    commentSubmitting.value = false
+  }
+}
+
+async function handleMarkInvalid() {
+  if (!detailTicket.value || detailTicket.value.status === 'invalid') return
+  actionSubmitting.value = true
+  detailError.value = ''
+  try {
+    const { data } = await markManagedTicketInvalid(detailTicket.value.id)
+    detailTicket.value = data.ticket
+    const index = tickets.value.findIndex((ticket) => ticket.id === data.ticket.id)
+    if (index !== -1) {
+      tickets.value[index] = data.ticket
+    }
+  } catch (err) {
+    detailError.value = err.response?.data?.message || 'Failed to mark ticket invalid.'
+  } finally {
+    actionSubmitting.value = false
+  }
+}
+
+function handleFindTechnician() {
+  searchModalOpen.value = true
+}
+
+async function handleTechnicianSelect(technician) {
+  if (!detailTicket.value) return
+  actionSubmitting.value = true
+  detailError.value = ''
+  try {
+    const { data } = await assignTechnicianToTicket(detailTicket.value.id, technician.id)
+    detailTicket.value = data.ticket
+
+    // Update ticket in list
+    const index = tickets.value.findIndex((ticket) => ticket.id === data.ticket.id)
+    if (index !== -1) {
+      tickets.value[index] = data.ticket
+    }
+  } catch (err) {
+    detailError.value = err.response?.data?.message || 'Failed to send technician request.'
+  } finally {
+    actionSubmitting.value = false
+  }
 }
 
 onMounted(loadTickets)
 </script>
 
 <template>
-  <div class="rounded-xl border border-[var(--color-border-default)] bg-[var(--color-bg-card)] p-6 shadow-sm">
-    <div class="mb-4 flex items-center justify-between">
-      <h3 class="text-sm font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-        Tenant Tickets
-      </h3>
+  <div class="rounded-2xl border border-[var(--color-border-default)] bg-[var(--color-bg-card)] p-4 shadow-sm sm:p-6">
+    <div class="mb-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+      <div>
+        <h3 class="text-sm font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">Tenant Tickets</h3>
+        <p class="mt-1 text-sm text-[var(--color-text-secondary)]">A lightweight queue. Open any ticket to review the full thread and history.</p>
+      </div>
       <select
         v-model="statusFilter"
-        @change="onFilterChange"
-        class="rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-input)] px-2 py-1 text-xs text-[var(--color-text-primary)] focus:border-primary-500 focus:ring-1 focus:ring-primary-500 focus:outline-none"
+        @change="loadTickets"
+        class="h-11 w-full rounded-full border border-[var(--color-border-default)] bg-[var(--color-bg-input)] px-3 py-2 text-sm text-[var(--color-text-primary)] focus:border-primary-500 focus:ring-1 focus:ring-primary-500 focus:outline-none sm:h-auto sm:w-auto sm:text-xs"
       >
         <option v-for="s in statuses" :key="s" :value="s">{{ statusLabels[s] }}</option>
       </select>
     </div>
 
-    <!-- Loading -->
     <div v-if="loading" class="text-sm text-[var(--color-text-muted)]">Loading...</div>
-
-    <!-- Error -->
     <div v-else-if="error" class="text-sm text-danger-500">{{ error }}</div>
+    <div v-else-if="tickets.length === 0" class="text-sm text-[var(--color-text-secondary)]">No tickets found.</div>
 
-    <!-- Empty -->
-    <div v-else-if="tickets.length === 0" class="text-sm text-[var(--color-text-secondary)]">
-      No tickets found.
+    <div v-else class="space-y-3">
+      <article
+        v-for="ticket in tickets"
+        :key="ticket.id"
+        class="flex flex-col gap-3 rounded-[22px] border border-[var(--color-border-default)] bg-[linear-gradient(135deg,var(--color-bg-elevated),#ffffff)] p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:p-4"
+      >
+        <div class="min-w-0">
+          <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--color-text-muted)]">{{ ticket.created_by.name }}</p>
+          <h4 class="mt-2 truncate text-base font-semibold text-[var(--color-text-primary)]">{{ ticket.title }}</h4>
+        </div>
+
+        <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+          <span :class="statusColors[ticket.status]" class="rounded-full px-3 py-1 text-xs font-semibold capitalize">
+            {{ ticket.status.replace('_', ' ') }}
+          </span>
+          <button
+            class="min-h-11 w-full rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 sm:min-h-0 sm:w-auto"
+            @click="openTicket(ticket.id)"
+          >
+            Open ticket
+          </button>
+        </div>
+      </article>
     </div>
 
-    <!-- Tickets table -->
-    <div v-else class="overflow-x-auto">
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="border-b border-[var(--color-border-default)] text-left text-xs uppercase tracking-wider text-[var(--color-text-muted)]">
-            <th class="pb-2 pr-4">Title</th>
-            <th class="pb-2 pr-4">Tenant</th>
-            <th class="pb-2 pr-4">Status</th>
-            <th class="pb-2 pr-4">Priority</th>
-            <th class="pb-2">Date</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-[var(--color-border-default)]">
-          <tr v-for="ticket in tickets" :key="ticket.id">
-            <td class="py-3 pr-4 font-medium text-[var(--color-text-primary)]">{{ ticket.title }}</td>
-            <td class="py-3 pr-4 text-[var(--color-text-secondary)]">{{ ticket.created_by.name }}</td>
-            <td class="py-3 pr-4">
-              <span :class="statusColors[ticket.status]" class="inline-block rounded-full px-2 py-0.5 text-xs font-medium capitalize">
-                {{ ticket.status.replace('_', ' ') }}
-              </span>
-            </td>
-            <td class="py-3 pr-4">
-              <span :class="priorityColors[ticket.priority]" class="inline-block rounded-full px-2 py-0.5 text-xs font-medium capitalize">
-                {{ ticket.priority }}
-              </span>
-            </td>
-            <td class="py-3 text-[var(--color-text-muted)]">
-              {{ new Date(ticket.created_at).toLocaleDateString() }}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <TicketDetailOverlay
+      :open="detailOpen"
+      :loading="detailLoading"
+      :ticket="detailTicket"
+      :error="detailError"
+      viewer-role="manager"
+      :comment-submitting="commentSubmitting"
+      :action-submitting="actionSubmitting"
+      :save-error="detailError"
+      @close="closeTicket"
+      @submit-comment="handleComment"
+      @mark-invalid="handleMarkInvalid"
+      @find-technician="handleFindTechnician"
+    />
+
+    <TechnicianSearchModal
+      :open="searchModalOpen"
+      @close="searchModalOpen = false"
+      @select-technician="handleTechnicianSelect"
+    />
   </div>
 </template>

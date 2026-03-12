@@ -1,6 +1,6 @@
-import pytest
 import json
-from app.models import db, User, UserRole
+import pytest
+from app.models import db, User, UserRole, Ticket, TicketPriority
 
 
 # ===================================================
@@ -11,10 +11,18 @@ def post_json(client, url, data):
     return client.post(url, data=json.dumps(data), content_type="application/json")
 
 
+def patch_json(client, url, data, token=None):
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return client.patch(url, data=json.dumps(data), headers=headers)
+
+
 REGISTER_URL = "/api/auth/register"
 LOGIN_URL = "/api/auth/login"
 REFRESH_URL = "/api/auth/refresh"
 PROFILE_URL = "/api/auth/profile"
+TECH_SERVICES_URL = "/api/technician/services"
 
 VALID_REGISTER = {
     "name": "Alice",
@@ -196,3 +204,89 @@ class TestProfile:
     def test_profile_without_token_fails(self, client):
         resp = client.get(PROFILE_URL)
         assert resp.status_code == 401
+
+    def test_profile_update_common_fields(self, client, make_user):
+        make_user(name="P2", email="p2@example.com", password="password123", role=UserRole.TENANT)
+        login = post_json(client, LOGIN_URL, {"email": "p2@example.com", "password": "password123"})
+        token = login.get_json()["access_token"]
+
+        resp = patch_json(client, PROFILE_URL, {
+            "phone": "123-456-7890",
+            "location": "Downtown",
+            "bio": "Tenant who files clear issue reports.",
+        }, token)
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["user"]["phone"] == "123-456-7890"
+        assert body["user"]["location"] == "Downtown"
+
+    def test_technician_services_catalog(self, client, make_user):
+        make_user(name="TechSrv", email="techsrv@example.com", password="password123", role=UserRole.TECHNICIAN)
+        login = post_json(client, LOGIN_URL, {"email": "techsrv@example.com", "password": "password123"})
+        token = login.get_json()["access_token"]
+
+        resp = client.get(TECH_SERVICES_URL, headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["success"] is True
+        assert len(body["services"]) >= 3
+
+
+class TestTechnicianReviews:
+
+    @pytest.fixture(autouse=True)
+    def _seed(self, make_user):
+        self.manager = make_user(name="Manager", email="manager.review@example.com", password="password123", role=UserRole.MANAGER)
+        self.tenant = make_user(
+            name="Tenant",
+            email="tenant.review@example.com",
+            password="password123",
+            role=UserRole.TENANT,
+            manager_id=self.manager.id,
+        )
+        self.tech = make_user(name="Tech", email="tech.review@example.com", password="password123", role=UserRole.TECHNICIAN)
+        self.other_tenant = make_user(name="OtherTenant", email="other.tenant@example.com", password="password123", role=UserRole.TENANT)
+
+        ticket = Ticket(
+            title="Reviewable ticket",
+            description="Issue worked on by technician",
+            priority=TicketPriority.MEDIUM,
+            created_by=self.tenant.id,
+            assigned_to=self.tech.id,
+        )
+        db.session.add(ticket)
+        db.session.commit()
+
+    def _login(self, client, email):
+        return post_json(client, LOGIN_URL, {"email": email, "password": "password123"}).get_json()["access_token"]
+
+    def test_tenant_can_review_worked_with_technician(self, client):
+        token = self._login(client, "tenant.review@example.com")
+        resp = client.post(
+            f"/api/technicians/{self.tech.id}/reviews",
+            data=json.dumps({"rating": 5, "comment": "Fast and professional service."}),
+            content_type="application/json",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 201
+        assert resp.get_json()["technician"]["average_rating"] == 5.0
+
+    def test_manager_can_review_worked_with_technician(self, client):
+        token = self._login(client, "manager.review@example.com")
+        resp = client.post(
+            f"/api/technicians/{self.tech.id}/reviews",
+            data=json.dumps({"rating": 4, "comment": "Good communication and on-time."}),
+            content_type="application/json",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 201
+
+    def test_unrelated_user_cannot_review(self, client):
+        token = self._login(client, "other.tenant@example.com")
+        resp = client.post(
+            f"/api/technicians/{self.tech.id}/reviews",
+            data=json.dumps({"rating": 4, "comment": "Trying to review without shared ticket."}),
+            content_type="application/json",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403
