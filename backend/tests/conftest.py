@@ -6,8 +6,7 @@ from app.models import db as _db, User, UserRole
 @pytest.fixture(scope="session")
 def app():
     """Create a Flask app configured for testing (in-memory SQLite)."""
-    app = create_app()
-    app.config.update({
+    app = create_app({
         "TESTING": True,
         "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
         "WTF_CSRF_ENABLED": False,

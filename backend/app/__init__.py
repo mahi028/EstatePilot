@@ -27,7 +27,7 @@ mail = Mail()
 # Application Factory
 # --------------------------------------------------
 
-def create_app() -> Flask:
+def create_app(config_overrides=None) -> Flask:
 
     app = Flask(
         __name__,
@@ -45,18 +45,14 @@ def create_app() -> Flask:
     else:
         app.config.from_object(DevelopmentConfig)
 
+    if config_overrides:
+        app.config.update(config_overrides)
+
     # -----------------------------------------------
     # Initialize Extensions
     # -----------------------------------------------
 
     init_extensions(app)
-
-    # -----------------------------------------------
-    # Create tables (dev convenience — migrations are authoritative)
-    # -----------------------------------------------
-
-    with app.app_context():
-        db.create_all()
 
     # -----------------------------------------------
     # Register Blueprints / APIs
