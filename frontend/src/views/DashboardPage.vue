@@ -19,7 +19,7 @@ const notificationPagination = ref({ page: 1, page_size: 6, total: 0, total_page
 const links = computed(() => {
   const role = auth.user?.role
   const base = [
-    // { to: '/tickets', label: 'Tickets', icon: 'ticket' },
+    { to: '/tickets', label: 'Tickets', icon: 'ticket' },
     { to: `/profile/${auth.user?.id || ''}`, label: 'My Profile', icon: 'profile' },
   ]
   if (role === 'manager') return [...base, { to: '/tickets', label: 'Managed Workflow', icon: 'workflow' }]

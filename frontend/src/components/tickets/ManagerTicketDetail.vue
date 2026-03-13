@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import { useRoute } from 'vue-router'
 import TechnicianSearchModal from '@/components/dashboard/TechnicianSearchModal.vue'
 import {
@@ -126,6 +127,13 @@ watch(() => route.params.ticketId, (value) => {
         <div class="mt-3 grid gap-2 text-sm text-[var(--color-text-secondary)]">
           <p><span class="font-medium text-[var(--color-text-primary)]">Technician:</span> {{ ticket.assigned_to?.name || 'Not assigned' }}</p>
           <p><span class="font-medium text-[var(--color-text-primary)]">Status:</span> {{ ticket.technician_request_pending ? 'Request pending' : 'No pending request' }}</p>
+          <RouterLink
+            v-if="ticket.assigned_to?.id"
+            :to="`/profile/${ticket.assigned_to.id}`"
+            class="text-xs font-medium text-primary-700 hover:underline"
+          >
+            View technician profile
+          </RouterLink>
         </div>
       </article>
 

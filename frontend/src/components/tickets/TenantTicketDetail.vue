@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import { useRoute, useRouter } from 'vue-router'
 import {
   addTenantTicketComment,
@@ -198,6 +199,21 @@ watch(() => route.params.ticketId, (value) => {
         </div>
 
         <p v-else class="mt-2 whitespace-pre-line text-sm text-[var(--color-text-secondary)]">{{ ticket.description }}</p>
+      </article>
+
+      <article class="rounded-2xl border border-[var(--color-border-default)] bg-[var(--color-bg-card)] p-4">
+        <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">Assignment</p>
+        <div class="mt-3 grid gap-2 text-sm text-[var(--color-text-secondary)]">
+          <p><span class="font-medium text-[var(--color-text-primary)]">Technician:</span> {{ ticket.assigned_to?.name || 'Not assigned' }}</p>
+          <p><span class="font-medium text-[var(--color-text-primary)]">Request:</span> {{ ticket.technician_request_pending ? 'Pending' : 'No pending request' }}</p>
+          <RouterLink
+            v-if="ticket.assigned_to?.id"
+            :to="`/profile/${ticket.assigned_to.id}`"
+            class="text-xs font-medium text-primary-700 hover:underline"
+          >
+            View technician profile
+          </RouterLink>
+        </div>
       </article>
 
       <article class="rounded-2xl border border-[var(--color-border-default)] bg-[var(--color-bg-card)] p-4">

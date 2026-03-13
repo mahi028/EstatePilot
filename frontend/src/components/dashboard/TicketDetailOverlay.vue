@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import { getUploadUrl } from '@/services/dashboard'
 
 const props = defineProps({
@@ -164,6 +165,13 @@ function imageUrl(filePath) {
                 <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Technician</p>
                 <p class="mt-2 text-sm font-semibold text-slate-900">{{ ticket.assigned_to?.name || 'Unassigned' }}</p>
                 <p class="mt-1 text-xs text-slate-500">{{ ticket.assigned_to?.email || 'No technician yet' }}</p>
+                <RouterLink
+                  v-if="ticket.assigned_to?.id"
+                  :to="`/profile/${ticket.assigned_to.id}`"
+                  class="mt-2 inline-block text-xs font-medium text-primary-700 hover:underline"
+                >
+                  View technician profile
+                </RouterLink>
               </article>
 
               <article class="rounded-2xl border border-slate-200 bg-white p-4">
