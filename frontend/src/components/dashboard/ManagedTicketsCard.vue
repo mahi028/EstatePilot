@@ -112,6 +112,11 @@ function handleFindTechnician() {
   searchModalOpen.value = true
 }
 
+function ticketStatusLabel(ticket) {
+  if (ticket.technician_request_pending) return 'request pending'
+  return ticket.status.replace('_', ' ')
+}
+
 async function handleTechnicianSelect(technician) {
   if (!detailTicket.value) return
   actionSubmitting.value = true
@@ -168,7 +173,7 @@ onMounted(loadTickets)
 
         <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
           <span :class="statusColors[ticket.status]" class="rounded-full px-3 py-1 text-xs font-semibold capitalize">
-            {{ ticket.status.replace('_', ' ') }}
+            {{ ticketStatusLabel(ticket) }}
           </span>
           <button
             class="min-h-11 w-full rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700 sm:min-h-0 sm:w-auto"
@@ -197,6 +202,8 @@ onMounted(loadTickets)
 
     <TechnicianSearchModal
       :open="searchModalOpen"
+      :ticket-id="detailTicket?.id || ''"
+      :default-service-id="detailTicket?.service_tag?.id || ''"
       @close="searchModalOpen = false"
       @select-technician="handleTechnicianSelect"
     />

@@ -6,8 +6,6 @@ import {
   createTechnicianReview,
   fetchTechnicianServices,
   fetchUserProfile,
-  removeManagedTenant,
-  removeMyManager,
   updateProfile,
   uploadProfileImage,
 } from '@/services/dashboard'
@@ -29,7 +27,6 @@ const success = ref('')
 const profile = ref(null)
 const managerProfile = ref(null)
 const services = ref([])
-const relationshipBusy = ref(false)
 
 const editForm = ref({
   name: '',
@@ -52,21 +49,7 @@ const reviewForm = ref({
 const selectedServiceIds = computed(() => new Set(editForm.value.service_ids))
 const userId = computed(() => String(route.params.userId || ''))
 const isOwnProfile = computed(() => auth.user?.id && auth.user.id === userId.value)
-const canRemoveManager = computed(() => {
-  if (!profile.value || !auth.user) return false
-  return auth.user.role === 'tenant' && profile.value.role === 'manager' && auth.user.manager_id === profile.value.id
-})
-const canRemoveTenant = computed(() => {
-  if (!profile.value || !auth.user) return false
-  return auth.user.role === 'manager' && profile.value.role === 'tenant' && profile.value.manager_id === auth.user.id
-})
-const canLeaveReview = computed(() => {
-  return Boolean(
-    profile.value?.role === 'technician'
-      && ['tenant', 'manager'].includes(auth.user?.role)
-      && profile.value?.can_review,
-  )
-})
+const canLeaveReview = computed(() => profile.value?.role === 'technician' && ['tenant', 'manager'].includes(auth.user?.role))
 
 function fillEditForm() {
   editForm.value.name = profile.value?.name || ''
@@ -124,48 +107,6 @@ async function loadProfile() {
     error.value = err.response?.data?.message || 'Failed to load profile.'
   } finally {
     loading.value = false
-  }
-}
-
-async function handleRemoveManager() {
-  if (!canRemoveManager.value) return
-  const confirmed = window.confirm('Remove your current manager? You will not be able to create tickets until a manager is assigned again.')
-  if (!confirmed) return
-
-  relationshipBusy.value = true
-  error.value = ''
-  success.value = ''
-
-  try {
-    await removeMyManager()
-    await auth.fetchProfile()
-    success.value = 'Manager removed.'
-  } catch (err) {
-    error.value = err.response?.data?.message || 'Failed to remove manager.'
-  } finally {
-    relationshipBusy.value = false
-  }
-}
-
-async function handleRemoveManagedTenant(tenant) {
-  if (!canRemoveTenant.value || !tenant?.id) return
-  const confirmed = window.confirm(`Remove ${tenant.name} from your managed tenants?`)
-  if (!confirmed) return
-
-  relationshipBusy.value = true
-  error.value = ''
-  success.value = ''
-
-  try {
-    await removeManagedTenant(tenant.id)
-    if (profile.value?.id === tenant.id) {
-      profile.value = { ...profile.value, manager_id: null }
-    }
-    success.value = `${tenant.name} removed from your managed tenants.`
-  } catch (err) {
-    error.value = err.response?.data?.message || 'Failed to remove tenant.'
-  } finally {
-    relationshipBusy.value = false
   }
 }
 
@@ -273,17 +214,12 @@ onMounted(loadProfile)
 </script>
 
 <template>
-  <div class="page-shell">
-    <!-- Loading skeleton -->
-    <div v-if="loading" class="loading-state">
-      <div class="skeleton sk-hero"></div>
-      <div class="skeleton-row">
-        <div class="skeleton sk-left"></div>
-        <div class="skeleton sk-right"></div>
-      </div>
+  <div class="mx-auto max-w-6xl py-4 sm:py-6">
+    <div v-if="loading" class="rounded-2xl border border-[var(--color-border-default)] bg-[var(--color-bg-card)] p-6 text-sm text-[var(--color-text-muted)] shadow-sm">
+      Loading profile...
     </div>
 
-    <div v-else-if="profile" class="page-content">
+    <div v-else-if="profile" class="space-y-6">
       <ProfileHero
         :profile="profile"
         :is-own-profile="isOwnProfile"
@@ -294,17 +230,11 @@ onMounted(loadProfile)
         @upload-image="uploadOwnProfileImage"
       />
 
-      <div class="content-grid">
-        <!-- Left column -->
-        <div class="col-main">
+      <div class="grid gap-6 xl:grid-cols-[1.55fr_1fr]">
+        <div class="space-y-6">
           <ProfileDetailsCard
             :profile="profile"
             :manager-profile="managerProfile"
-            :can-remove-manager="canRemoveManager"
-            :can-remove-tenant="canRemoveTenant"
-            :relationship-busy="relationshipBusy"
-            @remove-manager="handleRemoveManager"
-            @remove-tenant="handleRemoveManagedTenant"
           />
 
           <TechnicianReviewsCard
@@ -317,8 +247,7 @@ onMounted(loadProfile)
           />
         </div>
 
-        <!-- Right column -->
-        <div class="col-side">
+        <div class="space-y-4">
           <ProfileEditCard
             v-if="isOwnProfile && isEditing"
             :profile="profile"
@@ -329,108 +258,14 @@ onMounted(loadProfile)
             @save="saveOwnProfile"
           />
 
-          <!-- Toast notifications -->
-          <transition name="toast">
-            <div v-if="success" class="toast toast-success">
-              <svg viewBox="0 0 20 20" fill="none" class="toast-icon"><path d="M4 10l4.5 4.5L16 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              {{ success }}
-            </div>
-          </transition>
-          <transition name="toast">
-            <div v-if="error" class="toast toast-error">
-              <svg viewBox="0 0 20 20" fill="none" class="toast-icon"><path d="M10 6v4m0 4h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.5"/></svg>
-              {{ error }}
-            </div>
-          </transition>
+          <article v-if="success" class="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-700">
+            {{ success }}
+          </article>
+          <article v-if="error" class="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm font-medium text-rose-700">
+            {{ error }}
+          </article>
         </div>
       </div>
     </div>
   </div>
 </template>
-
-<style scoped>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500&display=swap');
-
-.page-shell {
-  font-family: 'DM Sans', sans-serif;
-  max-width: 1024px;
-  margin: 0 auto;
-  padding: 1.5rem 1rem 3rem;
-}
-
-.page-content {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
-.content-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
-  gap: 1.25rem;
-  align-items: start;
-}
-
-.col-main, .col-side {
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-/* Loading skeleton */
-.loading-state { display: flex; flex-direction: column; gap: 1.25rem; }
-.skeleton-row { display: grid; grid-template-columns: 1.6fr 1fr; gap: 1.25rem; }
-.skeleton {
-  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.4s infinite;
-  border-radius: 16px;
-}
-.sk-hero { height: 130px; }
-.sk-left { height: 320px; }
-.sk-right { height: 200px; }
-
-@keyframes shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-
-/* Toasts */
-.toast {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.75rem 1rem;
-  border-radius: 10px;
-  font-size: 0.85rem;
-  font-weight: 500;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.08);
-}
-
-.toast-success {
-  background: #f0fdf4;
-  color: #16a34a;
-  border: 1px solid #bbf7d0;
-}
-
-.toast-error {
-  background: #fff1f2;
-  color: #dc2626;
-  border: 1px solid #fecdd3;
-}
-
-.toast-icon { width: 16px; height: 16px; flex-shrink: 0; }
-
-.toast-enter-active, .toast-leave-active { transition: all 0.25s ease; }
-.toast-enter-from { opacity: 0; transform: translateY(-8px); }
-.toast-leave-to { opacity: 0; transform: translateY(-8px); }
-
-@media (max-width: 768px) {
-  .content-grid { grid-template-columns: 1fr; }
-  .skeleton-row { grid-template-columns: 1fr; }
-}
-
-@media (max-width: 480px) {
-  .page-shell { padding: 1rem 0.75rem 2rem; }
-}
-</style>

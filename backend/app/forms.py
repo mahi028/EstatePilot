@@ -109,6 +109,11 @@ class LoginForm(FlaskForm):
 
 class CreateTicketForm(FlaskForm):
 
+    service_tag_id = StringField(
+        "service_tag_id",
+        validators=[DataRequired()]
+    )
+
     title = StringField(
         "title",
         validators=[

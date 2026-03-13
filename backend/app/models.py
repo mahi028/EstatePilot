@@ -49,7 +49,7 @@ class InvitationStatus(enum.Enum):
 # USERS
 # ---------------------------------------------------
 
-class User(db.Model):
+class Users(db.Model):
     __tablename__ = "users"
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid4()))
@@ -59,23 +59,35 @@ class User(db.Model):
     role = db.Column(db.Enum(UserRole, name="user_roles"), nullable=False)
     profile_image_path = db.Column(db.String(500), nullable=True)
     phone = db.Column(db.String(40), nullable=True)
+    pincode = db.Column(db.String(12), nullable=True)
     location = db.Column(db.String(120), nullable=True)
     bio = db.Column(db.Text, nullable=True)
-    years_experience = db.Column(db.Integer, nullable=True)
-    base_price = db.Column(db.Float, nullable=True)
-    technician_headline = db.Column(db.String(180), nullable=True)
-
-    # Self-referential FK: tenants point to their manager
-    manager_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=True)
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    managed_tenants = db.relationship(
-        "User",
-        backref=db.backref("manager", remote_side="User.id"),
+    tenant_profile = db.relationship(
+        "TenantProfile",
+        back_populates="user",
+        foreign_keys="TenantProfile.user_id",
+        uselist=False,
         lazy=True,
+        cascade="all, delete-orphan",
+    )
+    manager_profile = db.relationship(
+        "ManagerProfile",
+        backref="user",
+        uselist=False,
+        lazy=True,
+        cascade="all, delete-orphan",
+    )
+    technician_profile = db.relationship(
+        "TechnicianProfile",
+        backref="user",
+        uselist=False,
+        lazy=True,
+        cascade="all, delete-orphan",
     )
     created_tickets = db.relationship(
         "Ticket", foreign_keys="Ticket.created_by", backref="creator", lazy=True
@@ -107,7 +119,6 @@ class User(db.Model):
     __table_args__ = (
         # email already has a unique index via unique=True — no need for ix_users_email
         db.Index("ix_users_role", "role"),
-        db.Index("ix_users_manager", "manager_id"),
     )
 
     # ---------------------------------------------------
@@ -140,8 +151,9 @@ class User(db.Model):
         return (
             db.session.execute(
                 db.select(Ticket)
-                .join(User, Ticket.created_by == User.id)
-                .filter(User.manager_id == self.id)
+                .join(Users, Ticket.created_by == Users.id)
+                .join(TenantProfile, TenantProfile.user_id == Users.id)
+                .filter(TenantProfile.manager_id == self.id)
                 .order_by(Ticket.created_at.desc())
             )
             .scalars()
@@ -150,6 +162,73 @@ class User(db.Model):
 
     def __repr__(self):
         return f"<User {self.email} ({self.role.value})>"
+
+    @property
+    def manager_id(self):
+        return self.tenant_profile.manager_id if self.tenant_profile else None
+
+    @manager_id.setter
+    def manager_id(self, value):
+        if self.tenant_profile is None:
+            self.tenant_profile = TenantProfile(user_id=self.id)
+        self.tenant_profile.manager_id = value
+
+    @property
+    def manager(self):
+        return self.tenant_profile.manager_user if self.tenant_profile else None
+
+    @property
+    def managed_tenants(self):
+        return (
+            db.session.execute(
+                db.select(Users)
+                .join(TenantProfile, TenantProfile.user_id == Users.id)
+                .filter(TenantProfile.manager_id == self.id)
+                .order_by(Users.name)
+            )
+            .scalars()
+            .all()
+        )
+
+    @property
+    def years_experience(self):
+        return self.technician_profile.years_experience if self.technician_profile else None
+
+    @years_experience.setter
+    def years_experience(self, value):
+        if self.technician_profile is None:
+            self.technician_profile = TechnicianProfile(user_id=self.id)
+        self.technician_profile.years_experience = value
+
+    @property
+    def base_price(self):
+        return self.technician_profile.base_price if self.technician_profile else None
+
+    @base_price.setter
+    def base_price(self, value):
+        if self.technician_profile is None:
+            self.technician_profile = TechnicianProfile(user_id=self.id)
+        self.technician_profile.base_price = value
+
+    @property
+    def technician_headline(self):
+        return self.technician_profile.technician_headline if self.technician_profile else None
+
+    @technician_headline.setter
+    def technician_headline(self, value):
+        if self.technician_profile is None:
+            self.technician_profile = TechnicianProfile(user_id=self.id)
+        self.technician_profile.technician_headline = value
+
+    @property
+    def service_pincode(self):
+        return self.technician_profile.service_pincode if self.technician_profile else None
+
+    @service_pincode.setter
+    def service_pincode(self, value):
+        if self.technician_profile is None:
+            self.technician_profile = TechnicianProfile(user_id=self.id)
+        self.technician_profile.service_pincode = value
 
     @property
     def average_rating(self):
@@ -161,6 +240,40 @@ class User(db.Model):
     @property
     def reviews_count(self):
         return len(self.received_reviews)
+
+
+class TenantProfile(db.Model):
+    __tablename__ = "tenant_profiles"
+
+    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), primary_key=True)
+    manager_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=True)
+
+    user = db.relationship("Users", foreign_keys=[user_id], back_populates="tenant_profile")
+    manager_user = db.relationship("Users", foreign_keys=[manager_id])
+
+    __table_args__ = (
+        db.Index("ix_tenant_profile_manager", "manager_id"),
+    )
+
+
+class ManagerProfile(db.Model):
+    __tablename__ = "manager_profiles"
+
+    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), primary_key=True)
+
+
+class TechnicianProfile(db.Model):
+    __tablename__ = "technician_profiles"
+
+    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), primary_key=True)
+    years_experience = db.Column(db.Integer, nullable=True)
+    base_price = db.Column(db.Float, nullable=True)
+    technician_headline = db.Column(db.String(180), nullable=True)
+    service_pincode = db.Column(db.String(12), nullable=True)
+
+
+# Backward compatibility alias for existing imports in APIs/tests.
+User = Users
 
 
 # ---------------------------------------------------
@@ -182,11 +295,13 @@ class Ticket(db.Model):
         db.Enum(TicketPriority, name="ticket_priority"),
         default=TicketPriority.MEDIUM, nullable=False,
     )
+    service_tag_id = db.Column(db.String(36), db.ForeignKey("technician_services.id"), nullable=True)
 
     # created_by = tenant,  assigned_to = technician
     # manager is derived: self.creator.manager
     created_by = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False)
     assigned_to = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=True)
+    technician_request_pending = db.Column(db.Boolean, default=False, nullable=False)
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -201,6 +316,10 @@ class Ticket(db.Model):
     comments = db.relationship(
         "TicketComment", backref="ticket", cascade="all, delete-orphan", lazy=True
     )
+    bids = db.relationship(
+        "TicketBid", backref="ticket", cascade="all, delete-orphan", lazy=True
+    )
+    service_tag = db.relationship("TechnicianService")
 
     __table_args__ = (
         db.Index("ix_ticket_status", "status"),
@@ -264,6 +383,20 @@ class Ticket(db.Model):
         comment = TicketComment(ticket_id=self.id, user_id=user.id, body=body)
         db.session.add(comment)
         return comment
+
+    def request_technician(self, technician, manager):
+        if not technician.is_technician():
+            raise ValueError("User is not a technician")
+        if self.status in [TicketStatus.DONE, TicketStatus.INVALID]:
+            raise ValueError("Cannot request technician for completed or invalid tickets")
+        self.assigned_to = technician.id
+        self.technician_request_pending = True
+        self.status = TicketStatus.OPEN
+        ActivityLog.create(
+            ticket_id=self.id,
+            user_id=manager.id,
+            action=f"Sent technician request to {technician.name}",
+        )
 
     def mark_invalid(self, user):
         if self.status != TicketStatus.INVALID:
@@ -351,6 +484,30 @@ class TechnicianReview(db.Model):
         return f"<TechnicianReview {self.technician_id} {self.rating}>"
 
 
+class TicketBid(db.Model):
+    __tablename__ = "ticket_bids"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid4()))
+    ticket_id = db.Column(db.String(36), db.ForeignKey("tickets.id"), nullable=False)
+    technician_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=False)
+    proposed_price = db.Column(db.Float, nullable=False)
+    message = db.Column(db.String(500), nullable=True)
+    is_selected_for_request = db.Column(db.Boolean, default=False, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    technician = db.relationship("Users", foreign_keys=[technician_id])
+
+    __table_args__ = (
+        db.UniqueConstraint("ticket_id", "technician_id", name="uq_ticket_bid_ticket_technician"),
+        db.Index("ix_ticket_bid_ticket", "ticket_id"),
+        db.Index("ix_ticket_bid_technician", "technician_id"),
+    )
+
+    def __repr__(self):
+        return f"<TicketBid {self.ticket_id} {self.technician_id} {self.proposed_price}>"
+
+
 # ---------------------------------------------------
 # TICKET COMMENTS
 # ---------------------------------------------------
@@ -364,7 +521,7 @@ class TicketComment(db.Model):
     body = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    user = db.relationship("User")
+    user = db.relationship("Users")
 
     __table_args__ = (
         db.Index("ix_ticket_comment_ticket", "ticket_id"),
@@ -388,7 +545,7 @@ class ActivityLog(db.Model):
     action = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    user = db.relationship("User")
+    user = db.relationship("Users")
 
     __table_args__ = (
         db.Index("ix_activity_ticket", "ticket_id"),
@@ -451,8 +608,8 @@ class ManagementInvitation(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    manager_user = db.relationship("User", foreign_keys=[manager_id], backref="sent_invitations")
-    tenant_user = db.relationship("User", foreign_keys=[tenant_id], backref="received_invitations")
+    manager_user = db.relationship("Users", foreign_keys=[manager_id], backref="sent_invitations")
+    tenant_user = db.relationship("Users", foreign_keys=[tenant_id], backref="received_invitations")
 
     __table_args__ = (
         db.UniqueConstraint("manager_id", "tenant_id", name="uq_management_invitation"),

@@ -1,11 +1,13 @@
 from flask_restful import Resource
 from flask import request, current_app
 from flask_jwt_extended import current_user
+from sqlalchemy import func
 
 from app.models import (
-    db, User, Ticket, TicketImage, TicketComment, TicketStatus, TicketPriority,
-    ActivityLog, Notification, UserRole,
+    db, User, TenantProfile, Ticket, TicketBid, TicketImage, TicketComment, TicketStatus, TicketPriority,
+    ActivityLog, Notification, TechnicianService, UserRole,
 )
+from app.api.auth import _ensure_predefined_services
 from app.forms import CreateTicketForm
 from app.utils.RBAC import roles_required
 from app.utils.upload import get_uploader
@@ -32,6 +34,16 @@ def _serialize_ticket(ticket, with_images=False, with_comments=False, with_activ
         "description": ticket.description,
         "status": ticket.status.value,
         "priority": ticket.priority.value,
+        "service_tag": (
+            {
+                "id": ticket.service_tag.id,
+                "code": ticket.service_tag.code,
+                "label": ticket.service_tag.label,
+            }
+            if ticket.service_tag
+            else None
+        ),
+        "technician_request_pending": ticket.technician_request_pending,
         "created_by": {
             "id": ticket.creator.id,
             "name": ticket.creator.name,
@@ -69,11 +81,58 @@ def _serialize_ticket(ticket, with_images=False, with_comments=False, with_activ
                 "id": log.id,
                 "action": log.action,
                 "user_id": log.user_id,
+                "user": {
+                    "id": log.user.id,
+                    "name": log.user.name,
+                    "role": log.user.role.value,
+                } if log.user else None,
                 "created_at": log.created_at.isoformat() if log.created_at else None,
             }
             for log in sorted(ticket.activity_logs, key=lambda item: item.created_at or 0, reverse=True)
         ]
     return data
+
+
+def _normalized_issue_text(value):
+    return " ".join((value or "").strip().lower().split())
+
+
+def _pagination_args(default_size=10, max_size=50):
+    try:
+        page = max(int(request.args.get("page", 1)), 1)
+    except (TypeError, ValueError):
+        page = 1
+
+    try:
+        page_size = int(request.args.get("page_size", default_size))
+    except (TypeError, ValueError):
+        page_size = default_size
+    page_size = max(1, min(page_size, max_size))
+    return page, page_size
+
+
+def _paginate_query(base_query, page, page_size):
+    total = db.session.execute(
+        db.select(func.count()).select_from(base_query.subquery())
+    ).scalar_one()
+
+    rows = db.session.execute(
+        base_query.offset((page - 1) * page_size).limit(page_size)
+    ).scalars().all()
+
+    return rows, {
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": (total + page_size - 1) // page_size,
+    }
+
+
+def _ticket_conflict_response():
+    return {
+        "success": False,
+        "message": "Ticket was updated by another action. Refresh and try again",
+    }, 409
 
 
 def _serialize_ticket_detail(ticket):
@@ -83,6 +142,38 @@ def _serialize_ticket_detail(ticket):
         with_comments=True,
         with_activity_logs=True,
     )
+
+
+def _serialize_bid(bid):
+    return {
+        "id": bid.id,
+        "ticket_id": bid.ticket_id,
+        "proposed_price": bid.proposed_price,
+        "message": bid.message,
+        "is_selected_for_request": bid.is_selected_for_request,
+        "created_at": bid.created_at.isoformat() if bid.created_at else None,
+        "updated_at": bid.updated_at.isoformat() if bid.updated_at else None,
+        "technician": {
+            "id": bid.technician.id,
+            "name": bid.technician.name,
+            "email": bid.technician.email,
+            "phone": bid.technician.phone,
+            "location": bid.technician.location,
+            "technician_headline": bid.technician.technician_headline,
+            "base_price": bid.technician.base_price,
+            "years_experience": bid.technician.years_experience,
+            "average_rating": bid.technician.average_rating,
+            "reviews_count": bid.technician.reviews_count,
+            "services": [
+                {
+                    "id": service.id,
+                    "code": service.code,
+                    "label": service.label,
+                }
+                for service in bid.technician.services
+            ],
+        },
+    }
 
 
 def _get_ticket_for_manager(ticket_id):
@@ -133,6 +224,8 @@ class TenantTicketsAPI(Resource):
                 "message": "You must be assigned to a manager before creating tickets",
             }, 403
 
+        _ensure_predefined_services()
+
         form = CreateTicketForm(data=request.json)
 
         if not form.validate():
@@ -144,6 +237,32 @@ class TenantTicketsAPI(Resource):
             priority=TicketPriority(form.priority.data),
             created_by=current_user.id,
         )
+
+        service_tag = db.session.get(TechnicianService, form.service_tag_id.data)
+        if not service_tag:
+            return {"success": False, "message": "Invalid service tag"}, 400
+
+        duplicate_ticket = db.session.execute(
+            db.select(Ticket).filter(
+                Ticket.created_by == current_user.id,
+                Ticket.service_tag_id == service_tag.id,
+                Ticket.status.in_([
+                    TicketStatus.OPEN,
+                    TicketStatus.ASSIGNED,
+                    TicketStatus.IN_PROGRESS,
+                ]),
+            )
+        ).scalars().all()
+
+        new_title = _normalized_issue_text(form.title.data)
+        if any(_normalized_issue_text(existing.title) == new_title for existing in duplicate_ticket):
+            return {
+                "success": False,
+                "message": "You already have an active ticket for this issue and service tag",
+            }, 409
+
+        ticket.service_tag_id = service_tag.id
+
         db.session.add(ticket)
 
         # Notify the tenant's manager
@@ -163,6 +282,9 @@ class TenantTicketsAPI(Resource):
     def get(self):
         status_filter = request.args.get("status")
         priority_filter = request.args.get("priority")
+        q = request.args.get("q", "").strip()
+        service_tag_id = request.args.get("service_tag_id", "").strip() or None
+        page, page_size = _pagination_args(default_size=10)
 
         query = db.select(Ticket).filter_by(created_by=current_user.id)
 
@@ -178,12 +300,24 @@ class TenantTicketsAPI(Resource):
             except ValueError:
                 return {"success": False, "message": "Invalid priority filter"}, 400
 
+        if service_tag_id:
+            query = query.filter(Ticket.service_tag_id == service_tag_id)
+
+        if q:
+            query = query.filter(
+                db.or_(
+                    Ticket.title.ilike(f"%{q}%"),
+                    Ticket.description.ilike(f"%{q}%"),
+                )
+            )
+
         query = query.order_by(Ticket.created_at.desc())
-        tickets = db.session.execute(query).scalars().all()
+        tickets, pagination = _paginate_query(query, page, page_size)
 
         return {
             "success": True,
             "tickets": [_serialize_ticket(t) for t in tickets],
+            "pagination": pagination,
         }, 200
 
 
@@ -247,6 +381,7 @@ class TenantTicketDetailAPI(Resource):
             return {"success": False, "message": "Ticket not found"}, 404
 
         manager_id = ticket.creator.manager_id
+        assigned_technician_id = ticket.assigned_to
         _delete_ticket_images(ticket)
         db.session.delete(ticket)
 
@@ -254,6 +389,12 @@ class TenantTicketDetailAPI(Resource):
             Notification.create(
                 user_id=manager_id,
                 message=f"Ticket '{ticket.title}' was deleted by {current_user.name}",
+            )
+
+        if assigned_technician_id:
+            Notification.create(
+                user_id=assigned_technician_id,
+                message=f"Ticket '{ticket.title}' was deleted by tenant {current_user.name}",
             )
 
         db.session.commit()
@@ -271,7 +412,8 @@ class ManagedTenantsAPI(Resource):
     def get(self):
         tenants = db.session.execute(
             db.select(User)
-            .filter_by(manager_id=current_user.id)
+            .join(TenantProfile, TenantProfile.user_id == User.id)
+            .filter(TenantProfile.manager_id == current_user.id)
             .order_by(User.name)
         ).scalars().all()
 
@@ -300,11 +442,15 @@ class ManagedTicketsAPI(Resource):
     def get(self):
         status_filter = request.args.get("status")
         priority_filter = request.args.get("priority")
+        q = request.args.get("q", "").strip()
+        service_tag_id = request.args.get("service_tag_id", "").strip() or None
+        page, page_size = _pagination_args(default_size=10)
 
         query = (
             db.select(Ticket)
             .join(User, Ticket.created_by == User.id)
-            .filter(User.manager_id == current_user.id)
+            .join(TenantProfile, TenantProfile.user_id == User.id)
+            .filter(TenantProfile.manager_id == current_user.id)
         )
 
         if status_filter:
@@ -319,12 +465,25 @@ class ManagedTicketsAPI(Resource):
             except ValueError:
                 return {"success": False, "message": "Invalid priority filter"}, 400
 
+        if service_tag_id:
+            query = query.filter(Ticket.service_tag_id == service_tag_id)
+
+        if q:
+            query = query.filter(
+                db.or_(
+                    Ticket.title.ilike(f"%{q}%"),
+                    Ticket.description.ilike(f"%{q}%"),
+                    User.name.ilike(f"%{q}%"),
+                )
+            )
+
         query = query.order_by(Ticket.created_at.desc())
-        tickets = db.session.execute(query).scalars().all()
+        tickets, pagination = _paginate_query(query, page, page_size)
 
         return {
             "success": True,
             "tickets": [_serialize_ticket(t) for t in tickets],
+            "pagination": pagination,
         }, 200
 
 
@@ -402,6 +561,11 @@ class ManagedTicketInvalidAPI(Resource):
             user_id=ticket.created_by,
             message=f"Your ticket '{ticket.title}' was marked invalid by {current_user.name}",
         )
+        if ticket.assigned_to:
+            Notification.create(
+                user_id=ticket.assigned_to,
+                message=f"Ticket '{ticket.title}' was marked invalid by manager {current_user.name}",
+            )
         db.session.commit()
 
         return {
@@ -525,6 +689,8 @@ class TechnicianTicketsAPI(Resource):
     def get(self):
         """Get all tickets assigned to or requested for current technician"""
         status_filter = request.args.get("status")
+        q = request.args.get("q", "").strip()
+        page, page_size = _pagination_args(default_size=10)
 
         # Get tickets assigned to this technician
         query = db.select(Ticket).filter_by(assigned_to=current_user.id)
@@ -535,13 +701,157 @@ class TechnicianTicketsAPI(Resource):
             except ValueError:
                 return {"success": False, "message": "Invalid status filter"}, 400
 
+        if q:
+            query = query.filter(
+                db.or_(
+                    Ticket.title.ilike(f"%{q}%"),
+                    Ticket.description.ilike(f"%{q}%"),
+                )
+            )
+
         query = query.order_by(Ticket.created_at.desc())
-        tickets = db.session.execute(query).scalars().all()
+        tickets, pagination = _paginate_query(query, page, page_size)
 
         return {
             "success": True,
             "tickets": [_serialize_ticket(t) for t in tickets],
+            "pagination": pagination,
         }, 200
+
+
+class TechnicianServiceAreaTicketsAPI(Resource):
+
+    method_decorators = [roles_required(UserRole.TECHNICIAN)]
+
+    def get(self):
+        """Get open tickets matching technician service areas for bidding."""
+        service_ids = [service.id for service in current_user.services]
+        if not service_ids:
+            return {
+                "success": True,
+                "tickets": [],
+                "pagination": {"page": 1, "page_size": 10, "total": 0, "total_pages": 0},
+            }, 200
+
+        q = request.args.get("q", "").strip()
+        page, page_size = _pagination_args(default_size=10)
+
+        query = (
+            db.select(Ticket)
+            .filter(
+                Ticket.status == TicketStatus.OPEN,
+                Ticket.assigned_to.is_(None),
+                Ticket.service_tag_id.in_(service_ids),
+            )
+            .order_by(Ticket.created_at.desc())
+        )
+
+        if q:
+            query = query.filter(
+                db.or_(
+                    Ticket.title.ilike(f"%{q}%"),
+                    Ticket.description.ilike(f"%{q}%"),
+                )
+            )
+
+        tickets, pagination = _paginate_query(query, page, page_size)
+        return {
+            "success": True,
+            "tickets": [_serialize_ticket(ticket) for ticket in tickets],
+            "pagination": pagination,
+        }, 200
+
+
+class TechnicianServiceAreaTicketDetailAPI(Resource):
+
+    method_decorators = [roles_required(UserRole.TECHNICIAN)]
+
+    def get(self, ticket_id):
+        """Read-only preview for open service-area tickets before assignment."""
+        ticket = db.session.get(Ticket, ticket_id)
+        if not ticket:
+            return {"success": False, "message": "Ticket not found"}, 404
+
+        service_ids = {service.id for service in current_user.services}
+        if not ticket.service_tag_id or ticket.service_tag_id not in service_ids:
+            return {"success": False, "message": "Ticket is outside your service areas"}, 403
+
+        if ticket.status != TicketStatus.OPEN or ticket.assigned_to is not None:
+            return {"success": False, "message": "Ticket preview is only available for open unassigned tickets"}, 400
+
+        return {
+            "success": True,
+            "ticket": _serialize_ticket(
+                ticket,
+                with_images=True,
+                with_comments=False,
+                with_activity_logs=False,
+            ),
+        }, 200
+
+
+class TechnicianTicketBidsAPI(Resource):
+
+    method_decorators = [roles_required(UserRole.TECHNICIAN)]
+
+    def post(self, ticket_id):
+        ticket = db.session.get(Ticket, ticket_id)
+        if not ticket:
+            return {"success": False, "message": "Ticket not found"}, 404
+
+        service_ids = {service.id for service in current_user.services}
+        if not ticket.service_tag_id or ticket.service_tag_id not in service_ids:
+            return {"success": False, "message": "Ticket is outside your service areas"}, 403
+
+        if ticket.status != TicketStatus.OPEN or ticket.assigned_to is not None:
+            return {"success": False, "message": "Bids are only allowed for open tickets"}, 400
+
+        payload = request.json or {}
+        raw_price = payload.get("proposed_price")
+        message = (payload.get("message") or "").strip() or None
+
+        try:
+            proposed_price = float(raw_price)
+            if proposed_price <= 0:
+                raise ValueError()
+        except (TypeError, ValueError):
+            return {"success": False, "message": "proposed_price must be a positive number"}, 400
+
+        bid = db.session.execute(
+            db.select(TicketBid).filter_by(ticket_id=ticket.id, technician_id=current_user.id)
+        ).scalar_one_or_none()
+
+        created = False
+        if bid is None:
+            bid = TicketBid(
+                ticket_id=ticket.id,
+                technician_id=current_user.id,
+                proposed_price=proposed_price,
+                message=message,
+            )
+            db.session.add(bid)
+            created = True
+        else:
+            bid.proposed_price = proposed_price
+            bid.message = message
+
+        ActivityLog.create(
+            ticket_id=ticket.id,
+            user_id=current_user.id,
+            action="Submitted technician bid" if created else "Updated technician bid",
+        )
+        if ticket.creator and ticket.creator.manager_id:
+            Notification.create(
+                user_id=ticket.creator.manager_id,
+                message=f"Technician {current_user.name} submitted a bid for '{ticket.title}'",
+            )
+
+        db.session.commit()
+        return {
+            "success": True,
+            "message": "Bid submitted" if created else "Bid updated",
+            "bid": _serialize_bid(bid),
+        }, 201 if created else 200
 
 
 class TechnicianTicketDetailAPI(Resource):
@@ -563,29 +873,41 @@ class TechnicianTicketAcceptAPI(Resource):
     method_decorators = [roles_required(UserRole.TECHNICIAN)]
 
     def patch(self, ticket_id):
-        """Technician accepts a pending request and starts working on the ticket"""
+        """Technician accepts a pending manager request and marks ticket assigned."""
         ticket = db.session.get(Ticket, ticket_id)
 
         if not ticket or ticket.assigned_to != current_user.id:
             return {"success": False, "message": "Ticket not found"}, 404
 
-        if ticket.status == TicketStatus.IN_PROGRESS:
-            return {"success": False, "message": "This ticket was already accepted"}, 400
-
         if ticket.status in [TicketStatus.DONE, TicketStatus.INVALID]:
             return {"success": False, "message": "Cannot accept completed or invalid tickets"}, 400
 
-        if ticket.status != TicketStatus.ASSIGNED:
-            return {"success": False, "message": "This request is no longer available"}, 400
+        if not ticket.technician_request_pending:
+            return {"success": False, "message": "This ticket request was already handled"}, 400
 
-        # Request accepted: move to active work state.
-        old_status = ticket.status
-        ticket.status = TicketStatus.IN_PROGRESS
+        updated = db.session.execute(
+            db.update(Ticket)
+            .where(
+                Ticket.id == ticket.id,
+                Ticket.assigned_to == current_user.id,
+                Ticket.technician_request_pending.is_(True),
+                Ticket.status.notin_([TicketStatus.DONE, TicketStatus.INVALID]),
+            )
+            .values(
+                status=TicketStatus.ASSIGNED,
+                technician_request_pending=False,
+            )
+        )
+        if updated.rowcount != 1:
+            db.session.rollback()
+            return _ticket_conflict_response()
+
+        ticket = db.session.get(Ticket, ticket_id)
         
         ActivityLog.create(
             ticket_id=ticket.id,
             user_id=current_user.id,
-            action=f"Accepted technician request (from {old_status.value})",
+            action="Accepted technician request",
         )
         
         # Notify the tenant's manager
@@ -604,6 +926,82 @@ class TechnicianTicketAcceptAPI(Resource):
         }, 200
 
 
+class TechnicianTicketStatusAPI(Resource):
+
+    method_decorators = [roles_required(UserRole.TECHNICIAN)]
+
+    def patch(self, ticket_id):
+        ticket = db.session.get(Ticket, ticket_id)
+
+        if not ticket or ticket.assigned_to != current_user.id:
+            return {"success": False, "message": "Ticket not found"}, 404
+
+        if ticket.technician_request_pending:
+            return {"success": False, "message": "Accept the ticket request before updating status"}, 400
+
+        raw_status = ((request.json or {}).get("status") or "").strip()
+        if not raw_status:
+            return {"success": False, "message": "Status is required"}, 400
+
+        try:
+            new_status = TicketStatus(raw_status)
+        except ValueError:
+            return {"success": False, "message": "Invalid status"}, 400
+
+        if new_status not in [TicketStatus.IN_PROGRESS, TicketStatus.DONE]:
+            return {"success": False, "message": "Technicians can only mark tickets in progress or done"}, 400
+
+        expected_from = TicketStatus.ASSIGNED if new_status == TicketStatus.IN_PROGRESS else TicketStatus.IN_PROGRESS
+
+        updated = db.session.execute(
+            db.update(Ticket)
+            .where(
+                Ticket.id == ticket.id,
+                Ticket.assigned_to == current_user.id,
+                Ticket.technician_request_pending.is_(False),
+                Ticket.status == expected_from,
+            )
+            .values(status=new_status)
+        )
+        if updated.rowcount != 1:
+            db.session.rollback()
+            fresh = db.session.get(Ticket, ticket_id)
+            if not fresh or fresh.assigned_to != current_user.id:
+                return {"success": False, "message": "Ticket not found"}, 404
+            if fresh.technician_request_pending:
+                return {"success": False, "message": "Accept the ticket request before updating status"}, 400
+            if fresh.status in [TicketStatus.DONE, TicketStatus.INVALID]:
+                return _ticket_conflict_response()
+            return {"success": False, "message": "Invalid ticket status transition"}, 400
+
+        ticket = db.session.get(Ticket, ticket_id)
+        ActivityLog.create(
+            ticket_id=ticket.id,
+            user_id=current_user.id,
+            action=f"Status changed from {expected_from.value} -> {new_status.value}",
+        )
+
+        recipients = {ticket.created_by}
+        if ticket.creator and ticket.creator.manager_id:
+            recipients.add(ticket.creator.manager_id)
+
+        for user_id in recipients:
+            if user_id == current_user.id:
+                continue
+            Notification.create(
+                user_id=user_id,
+                message=f"Ticket '{ticket.title}' is now {new_status.value.replace('_', ' ')}",
+            )
+
+        db.session.commit()
+
+        return {
+            "success": True,
+            "message": f"Ticket marked {new_status.value.replace('_', ' ')}",
+            "ticket": _serialize_ticket_detail(ticket),
+        }, 200
+
+
 class TechnicianTicketRejectAPI(Resource):
 
     method_decorators = [roles_required(UserRole.TECHNICIAN)]
@@ -618,7 +1016,7 @@ class TechnicianTicketRejectAPI(Resource):
         if ticket.status in [TicketStatus.DONE, TicketStatus.INVALID]:
             return {"success": False, "message": "Cannot decline completed or invalid tickets"}, 400
 
-        if ticket.status != TicketStatus.ASSIGNED:
+        if not ticket.technician_request_pending:
             return {"success": False, "message": "Only pending requests can be declined"}, 400
 
         # Revert status and clear assignment
@@ -626,6 +1024,7 @@ class TechnicianTicketRejectAPI(Resource):
         old_status = ticket.status
         ticket.status = TicketStatus.OPEN
         ticket.assigned_to = None
+        ticket.technician_request_pending = False
 
         ActivityLog.create(
             ticket_id=ticket.id,
@@ -660,7 +1059,7 @@ class TechnicianTicketCommentsAPI(Resource):
         if not ticket or ticket.assigned_to != current_user.id:
             return {"success": False, "message": "Ticket not found"}, 404
 
-        if ticket.status != TicketStatus.IN_PROGRESS:
+        if ticket.technician_request_pending or ticket.status not in [TicketStatus.ASSIGNED, TicketStatus.IN_PROGRESS]:
             return {"success": False, "message": "Accept the ticket request before commenting"}, 400
 
         body = (request.json or {}).get("body", "").strip()
@@ -713,7 +1112,9 @@ class TechnicianSearchAPI(Resource):
                     "email": t.email,
                     "technician_headline": t.technician_headline,
                     "phone": t.phone,
+                    "pincode": t.pincode,
                     "location": t.location,
+                    "service_pincode": t.service_pincode,
                     "average_rating": t.average_rating,
                     "reviews_count": t.reviews_count,
                     "services": [
@@ -735,7 +1136,7 @@ class AssignTechnicianAPI(Resource):
     method_decorators = [roles_required(UserRole.MANAGER)]
 
     def patch(self, ticket_id):
-        """Send a technician request for a ticket"""
+        """Send a technician request for a ticket."""
         ticket = _get_ticket_for_manager(ticket_id)
 
         if not ticket:
@@ -749,13 +1150,68 @@ class AssignTechnicianAPI(Resource):
         if not technician or technician.role != UserRole.TECHNICIAN:
             return {"success": False, "message": "Technician not found"}, 404
 
+        if ticket.service_tag_id:
+            technician_service_ids = {service.id for service in technician.services}
+            if ticket.service_tag_id not in technician_service_ids:
+                return {"success": False, "message": "Technician does not cover this service tag"}, 400
+
         if ticket.status in [TicketStatus.DONE, TicketStatus.INVALID]:
             return {"success": False, "message": "Cannot request technician for completed or invalid tickets"}, 400
 
-        # Manager sends a request; technician acceptance starts active work.
-        old_technician = ticket.technician.name if ticket.technician else None
-        ticket.assigned_to = technician.id
-        ticket.status = TicketStatus.ASSIGNED
+        if ticket.status == TicketStatus.IN_PROGRESS:
+            return {"success": False, "message": "Cannot change technician after work is in progress"}, 400
+
+        if ticket.technician_request_pending and ticket.assigned_to == technician.id:
+            return {"success": False, "message": "A pending request already exists for this technician"}, 400
+
+        if ticket.assigned_to == technician.id and not ticket.technician_request_pending:
+            return {"success": False, "message": "This technician is already assigned to the ticket"}, 400
+
+        previous_technician_id = ticket.assigned_to
+        previous_pending = ticket.technician_request_pending
+        previous_status = ticket.status
+
+        expected_previous_assignment = (
+            Ticket.assigned_to.is_(None) if previous_technician_id is None else Ticket.assigned_to == previous_technician_id
+        )
+
+        updated = db.session.execute(
+            db.update(Ticket)
+            .where(
+                Ticket.id == ticket.id,
+                expected_previous_assignment,
+                Ticket.technician_request_pending == previous_pending,
+                Ticket.status == previous_status,
+                Ticket.status.notin_([TicketStatus.DONE, TicketStatus.INVALID, TicketStatus.IN_PROGRESS]),
+            )
+            .values(
+                assigned_to=technician.id,
+                technician_request_pending=True,
+                status=TicketStatus.OPEN,
+            )
+        )
+        if updated.rowcount != 1:
+            db.session.rollback()
+            return _ticket_conflict_response()
+
+        ticket = db.session.get(Ticket, ticket_id)
+        previous_technician = db.session.get(User, previous_technician_id) if previous_technician_id else None
+        old_technician = previous_technician.name if previous_technician else None
+
+        for bid in ticket.bids:
+            bid.is_selected_for_request = bid.technician_id == technician.id
+
+        existing_bid = db.session.execute(
+            db.select(TicketBid).filter_by(ticket_id=ticket.id, technician_id=technician.id)
+        ).scalar_one_or_none()
+        if existing_bid:
+            existing_bid.is_selected_for_request = True
+
+        if previous_technician and previous_technician.id != technician.id:
+            Notification.create(
+                user_id=previous_technician.id,
+                message=f"Your assignment/request for '{ticket.title}' was withdrawn by manager {current_user.name}",
+            )
 
         ActivityLog.create(
             ticket_id=ticket.id,
@@ -781,4 +1237,40 @@ class AssignTechnicianAPI(Resource):
             "success": True,
             "message": f"Request sent to {technician.name}",
             "ticket": _serialize_ticket_detail(ticket),
+        }, 200
+
+
+class ManagerTicketBidsAPI(Resource):
+
+    method_decorators = [roles_required(UserRole.MANAGER)]
+
+    def get(self, ticket_id):
+        ticket = _get_ticket_for_manager(ticket_id)
+        if not ticket:
+            return {"success": False, "message": "Ticket not found"}, 404
+
+        q = request.args.get("q", "").strip()
+        page, page_size = _pagination_args(default_size=10)
+
+        query = (
+            db.select(TicketBid)
+            .filter(TicketBid.ticket_id == ticket.id)
+            .order_by(TicketBid.proposed_price.asc(), TicketBid.created_at.asc())
+        )
+
+        if q:
+            query = query.join(User, TicketBid.technician_id == User.id).filter(
+                db.or_(
+                    User.name.ilike(f"%{q}%"),
+                    User.email.ilike(f"%{q}%"),
+                )
+            )
+
+        bids, pagination = _paginate_query(query, page, page_size)
+
+        return {
+            "success": True,
+            "ticket": _serialize_ticket(ticket),
+            "bids": [_serialize_bid(bid) for bid in bids],
+            "pagination": pagination,
         }, 200

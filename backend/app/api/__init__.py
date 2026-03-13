@@ -16,6 +16,8 @@ from .invitations import (
     SentInvitationsAPI,
     ReceivedInvitationsAPI,
     RespondInvitationAPI,
+    RemoveTenantManagerAPI,
+    RemoveManagedTenantAPI,
 )
 from .tickets import (
     TenantTicketsAPI,
@@ -29,16 +31,23 @@ from .tickets import (
     TicketImageUploadAPI,
     TicketImageDeleteAPI,
     TechnicianTicketsAPI,
+    TechnicianServiceAreaTicketsAPI,
+    TechnicianServiceAreaTicketDetailAPI,
+    TechnicianTicketBidsAPI,
     TechnicianTicketDetailAPI,
     TechnicianTicketAcceptAPI,
     TechnicianTicketRejectAPI,
+    TechnicianTicketStatusAPI,
     TechnicianTicketCommentsAPI,
     TechnicianSearchAPI,
     AssignTechnicianAPI,
+    ManagerTicketBidsAPI,
 )
 from .notifications import (
     TenantNotificationsAPI,
     MarkNotificationReadAPI,
+    UserNotificationsAPI,
+    MarkUserNotificationReadAPI,
 )
 
 
@@ -60,6 +69,8 @@ api.add_resource(SendInvitationAPI, "/manager/invitations")
 api.add_resource(SentInvitationsAPI, "/manager/invitations/sent")
 api.add_resource(ReceivedInvitationsAPI, "/tenant/invitations")
 api.add_resource(RespondInvitationAPI, "/tenant/invitations/<string:invitation_id>")
+api.add_resource(RemoveTenantManagerAPI, "/tenant/manager")
+api.add_resource(RemoveManagedTenantAPI, "/manager/tenants/<string:tenant_id>")
 
 # Tenant — tickets & notifications
 api.add_resource(TenantTicketsAPI, "/tenant/tickets")
@@ -69,6 +80,8 @@ api.add_resource(TicketImageUploadAPI, "/tenant/tickets/<string:ticket_id>/image
 api.add_resource(TicketImageDeleteAPI, "/tenant/tickets/<string:ticket_id>/images/<string:image_id>")
 api.add_resource(TenantNotificationsAPI, "/tenant/notifications")
 api.add_resource(MarkNotificationReadAPI, "/tenant/notifications/<string:notification_id>")
+api.add_resource(UserNotificationsAPI, "/notifications")
+api.add_resource(MarkUserNotificationReadAPI, "/notifications/<string:notification_id>")
 
 # Manager — tenants & tickets
 api.add_resource(ManagedTenantsAPI, "/manager/tenants")
@@ -79,13 +92,18 @@ api.add_resource(ManagedTicketInvalidAPI, "/manager/tickets/<string:ticket_id>/i
 
 # Technician — assigned tickets
 api.add_resource(TechnicianTicketsAPI, "/technician/tickets")
+api.add_resource(TechnicianServiceAreaTicketsAPI, "/technician/tickets/service-area")
+api.add_resource(TechnicianServiceAreaTicketDetailAPI, "/technician/tickets/service-area/<string:ticket_id>")
+api.add_resource(TechnicianTicketBidsAPI, "/technician/tickets/<string:ticket_id>/bids")
 api.add_resource(TechnicianTicketDetailAPI, "/technician/tickets/<string:ticket_id>")
 api.add_resource(TechnicianTicketAcceptAPI, "/technician/tickets/<string:ticket_id>/accept")
 api.add_resource(TechnicianTicketRejectAPI, "/technician/tickets/<string:ticket_id>/reject")
+api.add_resource(TechnicianTicketStatusAPI, "/technician/tickets/<string:ticket_id>/status")
 api.add_resource(TechnicianTicketCommentsAPI, "/technician/tickets/<string:ticket_id>/comments")
 
 # Manager — technician search & assignment
 api.add_resource(TechnicianSearchAPI, "/manager/technicians/search")
+api.add_resource(ManagerTicketBidsAPI, "/manager/tickets/<string:ticket_id>/bids")
 api.add_resource(AssignTechnicianAPI, "/manager/tickets/<string:ticket_id>/assign")
 
 

@@ -2,7 +2,7 @@ from flask_restful import Resource
 from flask import request
 from flask_jwt_extended import current_user
 
-from app.models import db, User, UserRole, ManagementInvitation, InvitationStatus
+from app.models import db, User, UserRole, TenantProfile, ManagementInvitation, InvitationStatus, Notification
 from app.forms import SendInvitationForm
 from app.utils.RBAC import roles_required
 
@@ -41,7 +41,8 @@ class TenantSearchAPI(Resource):
         tenants = db.session.execute(
             db.select(User)
             .filter(User.role == UserRole.TENANT)
-            .filter(User.manager_id.is_(None))
+            .outerjoin(TenantProfile, TenantProfile.user_id == User.id)
+            .filter(TenantProfile.manager_id.is_(None))
             .filter(
                 db.or_(
                     User.name.ilike(f"%{q}%"),
@@ -185,4 +186,67 @@ class RespondInvitationAPI(Resource):
             "success": True,
             "message": f"Invitation {action}ed",
             "invitation": _serialize_invitation(invitation),
+        }, 200
+
+
+# --------------------------------------------------
+# TENANT REMOVES CURRENT MANAGER (Tenant only)
+# --------------------------------------------------
+
+class RemoveTenantManagerAPI(Resource):
+
+    method_decorators = [roles_required(UserRole.TENANT)]
+
+    def delete(self):
+        manager = current_user.manager
+        if not manager:
+            return {"success": False, "message": "No manager assigned"}, 400
+
+        current_user.manager_id = None
+
+        Notification.create(
+            user_id=manager.id,
+            message=f"Tenant {current_user.name} removed you as manager",
+        )
+
+        db.session.commit()
+        return {
+            "success": True,
+            "message": "Manager removed",
+        }, 200
+
+
+# --------------------------------------------------
+# MANAGER REMOVES A MANAGED TENANT (Manager only)
+# --------------------------------------------------
+
+class RemoveManagedTenantAPI(Resource):
+
+    method_decorators = [roles_required(UserRole.MANAGER)]
+
+    def delete(self, tenant_id):
+        tenant = db.session.get(User, tenant_id)
+        if not tenant or tenant.role != UserRole.TENANT:
+            return {"success": False, "message": "Tenant not found"}, 404
+
+        if tenant.manager_id != current_user.id:
+            return {"success": False, "message": "Tenant not found in your managed list"}, 404
+
+        tenant.manager_id = None
+
+        Notification.create(
+            user_id=tenant.id,
+            message=f"Manager {current_user.name} removed you from managed tenants",
+        )
+
+        db.session.commit()
+
+        return {
+            "success": True,
+            "message": "Tenant removed",
+            "tenant": {
+                "id": tenant.id,
+                "name": tenant.name,
+                "email": tenant.email,
+            },
         }, 200

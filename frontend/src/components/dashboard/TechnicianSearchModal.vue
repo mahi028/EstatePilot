@@ -1,9 +1,11 @@
 <script setup>
-import { onMounted, ref } from 'vue'
-import { fetchTechnicianServices, searchTechnicians } from '@/services/dashboard'
+import { onMounted, ref, watch } from 'vue'
+import { fetchManagerTicketBids, fetchTechnicianServices, searchTechnicians } from '@/services/dashboard'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
+  ticketId: { type: String, default: '' },
+  defaultServiceId: { type: String, default: '' },
 })
 
 const emit = defineEmits(['close', 'select-technician'])
@@ -12,15 +14,16 @@ const searchQuery = ref('')
 const selectedServiceId = ref('')
 const technicians = ref([])
 const services = ref([])
-const loading = ref(false)
 const searching = ref(false)
 const error = ref('')
+const bids = ref([])
+const bidsLoading = ref(false)
 
 async function loadServices() {
   try {
     const { data } = await fetchTechnicianServices()
     services.value = data.services
-  } catch (err) {
+  } catch {
     error.value = 'Failed to load services'
   }
 }
@@ -43,6 +46,23 @@ async function performSearch() {
   }
 }
 
+async function loadBids() {
+  if (!props.ticketId) {
+    bids.value = []
+    return
+  }
+
+  bidsLoading.value = true
+  try {
+    const { data } = await fetchManagerTicketBids(props.ticketId)
+    bids.value = data.bids || []
+  } catch {
+    bids.value = []
+  } finally {
+    bidsLoading.value = false
+  }
+}
+
 function handleSelectTechnician(technician) {
   emit('select-technician', technician)
   closeModal()
@@ -51,11 +71,28 @@ function handleSelectTechnician(technician) {
 function closeModal() {
   emit('close')
   searchQuery.value = ''
-  selectedServiceId.value = ''
+  selectedServiceId.value = props.defaultServiceId || ''
   technicians.value = []
 }
 
 onMounted(loadServices)
+
+watch(
+  () => props.open,
+  (isOpen) => {
+    if (!isOpen) return
+    selectedServiceId.value = props.defaultServiceId || ''
+    loadBids()
+    performSearch()
+  },
+)
+
+watch(
+  () => props.ticketId,
+  () => {
+    if (props.open) loadBids()
+  },
+)
 </script>
 
 <template>
@@ -70,6 +107,45 @@ onMounted(loadServices)
       </div>
 
       <div class="p-4 sm:p-6">
+        <div class="mb-5 rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)] p-4">
+          <h3 class="text-sm font-semibold text-[var(--color-text-primary)]">Technician bids</h3>
+          <p class="mt-1 text-xs text-[var(--color-text-secondary)]">Review bids and profile details, then select a technician to request.</p>
+
+          <div v-if="bidsLoading" class="mt-3 text-sm text-[var(--color-text-muted)]">Loading bids...</div>
+          <div v-else-if="!bids.length" class="mt-3 text-sm text-[var(--color-text-secondary)]">No bids submitted yet.</div>
+
+          <div v-else class="mt-3 space-y-3">
+            <article
+              v-for="bid in bids"
+              :key="bid.id"
+              class="rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-card)] p-3"
+            >
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-semibold text-[var(--color-text-primary)]">{{ bid.technician.name }}</p>
+                  <p class="text-xs text-[var(--color-text-secondary)]">{{ bid.technician.email }}</p>
+                  <RouterLink
+                    :to="`/profile/${bid.technician.id}`"
+                    class="mt-1 inline-block text-xs font-semibold text-primary-700 hover:text-primary-800"
+                    @click.stop
+                  >
+                    View profile
+                  </RouterLink>
+                  <p class="mt-1 text-xs text-[var(--color-text-secondary)]">Bid: <span class="font-semibold text-[var(--color-text-primary)]">${{ Number(bid.proposed_price).toFixed(2) }}</span></p>
+                  <p v-if="bid.message" class="mt-1 text-xs text-[var(--color-text-secondary)]">{{ bid.message }}</p>
+                  <p class="mt-1 text-xs text-[var(--color-text-secondary)]">Rating: {{ bid.technician.average_rating || 'N/A' }} ({{ bid.technician.reviews_count || 0 }} reviews)</p>
+                </div>
+                <button
+                  class="rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white hover:bg-primary-700"
+                  @click="handleSelectTechnician(bid.technician)"
+                >
+                  Request
+                </button>
+              </div>
+            </article>
+          </div>
+        </div>
+
         <!-- Search Form -->
         <div class="space-y-3 mb-4">
           <div>
@@ -127,8 +203,18 @@ onMounted(loadServices)
                   {{ technician.technician_headline }}
                 </div>
 
+                <RouterLink
+                  :to="`/profile/${technician.id}`"
+                  class="mt-2 inline-block text-xs font-semibold text-primary-700 hover:text-primary-800"
+                  @click.stop
+                >
+                  View profile
+                </RouterLink>
+
                 <div class="mt-2 flex flex-wrap gap-2 items-center text-xs text-[var(--color-text-secondary)]">
                   <span v-if="technician.location">📍 {{ technician.location }}</span>
+                  <span v-if="technician.pincode">PIN {{ technician.pincode }}</span>
+                  <span v-if="technician.service_pincode">Service PIN {{ technician.service_pincode }}</span>
                   <span v-if="technician.phone">📱 {{ technician.phone }}</span>
                   <span v-if="technician.average_rating">⭐ {{ technician.average_rating }}/5 ({{ technician.reviews_count }} reviews)</span>
                 </div>

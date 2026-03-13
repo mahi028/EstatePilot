@@ -33,6 +33,18 @@ const router = createRouter({
       component: () => import('@/views/ProfilePage.vue'),
       meta: { requiresAuth: true },
     },
+    {
+      path: '/tickets',
+      name: 'tickets',
+      component: () => import('@/views/TicketsPage.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/tickets/:ticketId',
+      name: 'ticket-detail',
+      component: () => import('@/views/TicketDetailPage.vue'),
+      meta: { requiresAuth: true },
+    },
   ],
 })
 

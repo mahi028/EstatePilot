@@ -1,0 +1,45 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: estatepilot-caddy
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+
+  backend:
+    build:
+      context: ./backend
+    container_name: estatepilot-backend
+    env_file:
+      - ./backend/.env
+    environment:
+      SQLALCHEMY_DATABASE_URI: sqlite:////data/database.sqlite3
+      FRONTEND_BASE_URL: http://localhost:8080
+    expose:
+      - "5000"
+    volumes:
+      - backend_data:/data
+      - backend_uploads:/app/app/static/upload
+    command: >
+      sh -c "uv run flask --app main db upgrade &&
+             uv run python scripts/seed_demo_data.py &&
+             uv run flask --app main run --host 0.0.0.0 --port 5000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-/api}
+    container_name: estatepilot-frontend
+    depends_on:
+      - backend
+    expose:
+      - "5173"
+
+volumes:
+  backend_data:
+  backend_uploads:

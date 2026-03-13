@@ -15,6 +15,8 @@ SEND_INV_URL = "/api/manager/invitations"
 SENT_INV_URL = "/api/manager/invitations/sent"
 RECV_INV_URL = "/api/tenant/invitations"
 RESPOND_INV_URL = "/api/tenant/invitations"  # + /<id>
+REMOVE_MANAGER_URL = "/api/tenant/manager"
+MANAGER_TENANTS_URL = "/api/manager/tenants"
 
 
 def post_json(client, url, data, token=None):
@@ -36,6 +38,13 @@ def patch_json(client, url, data, token=None):
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return client.patch(url, data=json.dumps(data), headers=headers)
+
+
+def delete_json(client, url, token=None):
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return client.delete(url, headers=headers)
 
 
 def _login(client, email, password="password123"):
@@ -308,3 +317,46 @@ class TestRespondInvitation:
     def test_requires_auth(self, client):
         resp = patch_json(client, self._url(), {"action": "accept"})
         assert resp.status_code == 401
+
+
+class TestTenantRemovesManager:
+
+    def test_tenant_can_remove_own_manager(self, client, manager_user, managed_tenant):
+        token = _login(client, managed_tenant.email)
+        resp = delete_json(client, REMOVE_MANAGER_URL, token)
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["success"] is True
+
+        db.session.refresh(managed_tenant)
+        assert managed_tenant.manager_id is None
+
+    def test_remove_manager_requires_existing_manager(self, client, free_tenant):
+        token = _login(client, free_tenant.email)
+        resp = delete_json(client, REMOVE_MANAGER_URL, token)
+        assert resp.status_code == 400
+
+    def test_manager_cannot_remove_via_tenant_endpoint(self, client, mgr_token):
+        resp = delete_json(client, REMOVE_MANAGER_URL, mgr_token)
+        assert resp.status_code == 403
+
+
+class TestManagerRemovesTenant:
+
+    def test_manager_can_remove_managed_tenant(self, client, mgr_token, managed_tenant):
+        resp = delete_json(client, f"{MANAGER_TENANTS_URL}/{managed_tenant.id}", mgr_token)
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["success"] is True
+        assert body["tenant"]["id"] == managed_tenant.id
+
+        db.session.refresh(managed_tenant)
+        assert managed_tenant.manager_id is None
+
+    def test_manager_cannot_remove_unmanaged_tenant(self, client, mgr_token, free_tenant):
+        resp = delete_json(client, f"{MANAGER_TENANTS_URL}/{free_tenant.id}", mgr_token)
+        assert resp.status_code == 404
+
+    def test_tenant_cannot_remove_managed_tenant(self, client, tenant_token, managed_tenant):
+        resp = delete_json(client, f"{MANAGER_TENANTS_URL}/{managed_tenant.id}", tenant_token)
+        assert resp.status_code == 403

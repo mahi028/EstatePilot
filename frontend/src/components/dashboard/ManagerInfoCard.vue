@@ -57,6 +57,12 @@ onMounted(loadInvitations)
         <div>
           <p class="text-sm font-medium text-[var(--color-text-primary)]">Manager Assigned</p>
           <p class="text-xs text-[var(--color-text-muted)]">You can create tickets for maintenance issues.</p>
+          <RouterLink
+            :to="`/profile/${auth.user?.manager_id}`"
+            class="mt-1 inline-block text-xs font-medium text-primary-700 hover:underline"
+          >
+            Open manager profile
+          </RouterLink>
         </div>
       </div>
     </div>

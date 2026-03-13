@@ -1,12 +1,17 @@
 from flask_restful import Resource
 from flask import request, current_app
 from flask_jwt_extended import jwt_required, current_user, get_jwt
+import re
 
 from app.models import (
     db,
     User,
     UserRole,
+    TenantProfile,
+    ManagerProfile,
+    TechnicianProfile,
     Ticket,
+    TicketStatus,
     TechnicianService,
     TechnicianReview,
 )
@@ -77,7 +82,19 @@ def _serialize_review(review):
     }
 
 
-def _serialize_user(user, include_profile=False, include_reviews=False):
+def _reviewer_has_existing_review(reviewer, technician):
+    if not reviewer or not technician:
+        return False
+    existing = db.session.execute(
+        db.select(TechnicianReview.id).filter_by(
+            technician_id=technician.id,
+            reviewer_id=reviewer.id,
+        )
+    ).first()
+    return existing is not None
+
+
+def _serialize_user(user, include_profile=False, include_reviews=False, reviewer=None):
     data = {
         "id": user.id,
         "name": user.name,
@@ -92,16 +109,25 @@ def _serialize_user(user, include_profile=False, include_reviews=False):
         data.update(
             {
                 "phone": user.phone,
+                "pincode": user.pincode,
                 "location": user.location,
                 "bio": user.bio,
                 "years_experience": user.years_experience,
                 "base_price": user.base_price,
                 "technician_headline": user.technician_headline,
+                "service_pincode": user.service_pincode,
                 "services": [_serialize_service(service) for service in user.services],
                 "average_rating": user.average_rating,
                 "reviews_count": user.reviews_count,
             }
         )
+        if user.is_technician():
+            data["can_review"] = bool(
+                reviewer
+                and reviewer.id != user.id
+                and _reviewer_can_review_technician(reviewer, user)
+                and not _reviewer_has_existing_review(reviewer, user)
+            )
 
     if include_reviews and user.is_technician():
         data["reviews"] = [
@@ -137,18 +163,46 @@ def _reviewer_can_review_technician(reviewer, technician):
         query = db.select(Ticket.id).filter(
             Ticket.assigned_to == technician.id,
             Ticket.created_by == reviewer.id,
+            Ticket.status == TicketStatus.DONE,
         )
         return db.session.execute(query).first() is not None
 
     query = (
         db.select(Ticket.id)
         .join(User, Ticket.created_by == User.id)
+        .join(TenantProfile, TenantProfile.user_id == User.id)
         .filter(
             Ticket.assigned_to == technician.id,
-            User.manager_id == reviewer.id,
+            TenantProfile.manager_id == reviewer.id,
+            Ticket.status == TicketStatus.DONE,
         )
     )
     return db.session.execute(query).first() is not None
+
+
+_PHONE_ALLOWED_RE = re.compile(r"^[0-9+()\-\s]+$")
+_PINCODE_RE = re.compile(r"^[0-9]{4,10}$")
+
+
+def _normalize_phone(value):
+    phone = (value or "").strip()
+    if not phone:
+        return None
+    if not _PHONE_ALLOWED_RE.fullmatch(phone):
+        raise ValueError("Phone number can contain only digits, spaces, +, -, and parentheses")
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) < 7 or len(digits) > 15:
+        raise ValueError("Phone number must contain between 7 and 15 digits")
+    return phone
+
+
+def _normalize_pincode(value, field_name="Pincode"):
+    pincode = (value or "").strip()
+    if not pincode:
+        return None
+    if not _PINCODE_RE.fullmatch(pincode):
+        raise ValueError(f"{field_name} must be numeric and 4 to 10 digits long")
+    return pincode
 
 
 # --------------------------------------------------
@@ -171,12 +225,20 @@ class RegisterAPI(Resource):
             name=form.name.data,
             email=form.email.data,
             role=UserRole(form.role.data),
-            manager_id=form.manager_id.data or None,
         )
 
         user.set_password(form.password.data)
 
         db.session.add(user)
+        db.session.flush()
+
+        if user.role == UserRole.TENANT:
+            db.session.add(TenantProfile(user_id=user.id, manager_id=form.manager_id.data or None))
+        elif user.role == UserRole.MANAGER:
+            db.session.add(ManagerProfile(user_id=user.id))
+        elif user.role == UserRole.TECHNICIAN:
+            db.session.add(TechnicianProfile(user_id=user.id))
+
         db.session.commit()
 
         tokens = generate_tokens(user)
@@ -250,22 +312,39 @@ class ProfileAPI(Resource):
     def get(self):
         return {
             "success": True,
-            "user": _serialize_user(current_user, include_profile=True, include_reviews=True),
+            "user": _serialize_user(current_user, include_profile=True, include_reviews=True, reviewer=current_user),
         }, 200
 
     @jwt_required()
     def patch(self):
         payload = request.json or {}
 
-        for field in ["name", "phone", "location", "bio", "technician_headline"]:
+        for field in ["name", "location", "bio"]:
             if field in payload:
                 setattr(current_user, field, (payload.get(field) or "").strip() or None)
 
+        try:
+            if "phone" in payload:
+                current_user.phone = _normalize_phone(payload.get("phone"))
+            if "pincode" in payload:
+                current_user.pincode = _normalize_pincode(payload.get("pincode"), "Pincode")
+        except ValueError as error:
+            return {"success": False, "message": str(error)}, 400
+
+        if "technician_headline" in payload:
+            if not current_user.is_technician():
+                return {"success": False, "message": "Only technicians can update technician headline"}, 403
+            current_user.technician_headline = (payload.get("technician_headline") or "").strip() or None
+
         if "base_price" in payload:
+            if not current_user.is_technician():
+                return {"success": False, "message": "Only technicians can update base price"}, 403
             value = payload.get("base_price")
             current_user.base_price = float(value) if value not in (None, "") else None
 
         if "years_experience" in payload:
+            if not current_user.is_technician():
+                return {"success": False, "message": "Only technicians can update experience"}, 403
             value = payload.get("years_experience")
             years = int(value) if value not in (None, "") else None
             if years is not None and years < 0:
@@ -283,12 +362,20 @@ class ProfileAPI(Resource):
                 return {"success": False, "message": "Some services are invalid"}, 400
             current_user.services = services
 
+        if "service_pincode" in payload:
+            if not current_user.is_technician():
+                return {"success": False, "message": "Only technicians can update service pincode"}, 403
+            try:
+                current_user.service_pincode = _normalize_pincode(payload.get("service_pincode"), "Service pincode")
+            except ValueError as error:
+                return {"success": False, "message": str(error)}, 400
+
         db.session.commit()
 
         return {
             "success": True,
             "message": "Profile updated",
-            "user": _serialize_user(current_user, include_profile=True, include_reviews=True),
+            "user": _serialize_user(current_user, include_profile=True, include_reviews=True, reviewer=current_user),
         }, 200
 
 
@@ -316,7 +403,7 @@ class ProfileImageAPI(Resource):
             return {
                 "success": True,
                 "message": "Profile image updated",
-                "user": _serialize_user(current_user, include_profile=True, include_reviews=True),
+                "user": _serialize_user(current_user, include_profile=True, include_reviews=True, reviewer=current_user),
             }, 200
         except ValueError as error:
             return {"success": False, "message": str(error)}, 400
@@ -347,7 +434,7 @@ class UserProfileAPI(Resource):
         include_reviews = user.is_technician()
         return {
             "success": True,
-            "user": _serialize_user(user, include_profile=True, include_reviews=include_reviews),
+            "user": _serialize_user(user, include_profile=True, include_reviews=include_reviews, reviewer=current_user),
         }, 200
 
 
@@ -396,5 +483,5 @@ class TechnicianReviewsAPI(Resource):
             "success": True,
             "message": "Review added",
             "review": _serialize_review(review),
-            "technician": _serialize_user(technician, include_profile=True, include_reviews=True),
+            "technician": _serialize_user(technician, include_profile=True, include_reviews=True, reviewer=current_user),
         }, 201

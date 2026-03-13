@@ -101,7 +101,9 @@ onMounted(loadData)
       <ul v-if="tenants.length" class="divide-y divide-[var(--color-border-default)]">
         <li v-for="tenant in tenants" :key="tenant.id" class="flex items-center justify-between py-3 first:pt-0 last:pb-0">
           <div>
-            <p class="text-sm font-medium text-[var(--color-text-primary)]">{{ tenant.name }}</p>
+            <RouterLink :to="`/profile/${tenant.id}`" class="text-sm font-medium text-[var(--color-text-primary)] hover:underline">
+              {{ tenant.name }}
+            </RouterLink>
             <p class="text-xs text-[var(--color-text-muted)]">{{ tenant.email }}</p>
           </div>
           <span class="inline-block rounded-full bg-success-100 px-2 py-0.5 text-xs font-medium text-success-700">Active</span>

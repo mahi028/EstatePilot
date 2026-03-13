@@ -7,6 +7,7 @@ import {
   createTicket,
   deleteTicket,
   deleteTicketImage,
+  fetchTechnicianServices,
   fetchTenantTickets,
   fetchTicketDetail,
   updateTicket,
@@ -25,9 +26,11 @@ const showCreateForm = ref(false)
 const newTitle = ref('')
 const newDescription = ref('')
 const newPriority = ref('medium')
+const newServiceTagId = ref('')
 const selectedImages = ref([])
 const creating = ref(false)
 const createError = ref('')
+const serviceTags = ref([])
 
 const detailOpen = ref(false)
 const detailLoading = ref(false)
@@ -92,6 +95,18 @@ async function loadTickets() {
     error.value = 'Failed to load tickets.'
   } finally {
     loading.value = false
+  }
+}
+
+async function loadServiceTags() {
+  try {
+    const { data } = await fetchTechnicianServices()
+    serviceTags.value = data.services || []
+    if (!newServiceTagId.value && serviceTags.value.length) {
+      newServiceTagId.value = serviceTags.value[0].id
+    }
+  } catch {
+    serviceTags.value = []
   }
 }
 
@@ -250,6 +265,7 @@ async function handleCreate() {
       title: newTitle.value,
       description: newDescription.value,
       priority: newPriority.value,
+      service_tag_id: newServiceTagId.value,
     })
     const ticketId = ticketRes.data.ticket.id
 
@@ -260,6 +276,9 @@ async function handleCreate() {
     newTitle.value = ''
     newDescription.value = ''
     newPriority.value = 'medium'
+    if (serviceTags.value.length) {
+      newServiceTagId.value = serviceTags.value[0].id
+    }
     clearImages()
     showCreateForm.value = false
     await loadTickets()
@@ -270,7 +289,9 @@ async function handleCreate() {
   }
 }
 
-onMounted(loadTickets)
+onMounted(async () => {
+  await Promise.all([loadTickets(), loadServiceTags()])
+})
 </script>
 
 <template>
@@ -346,6 +367,15 @@ onMounted(loadTickets)
         </div>
         <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
           <select
+            v-model="newServiceTagId"
+            class="h-11 w-full rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-input)] px-3 py-2 text-sm text-[var(--color-text-primary)] focus:border-primary-500 focus:ring-1 focus:ring-primary-500 focus:outline-none sm:h-auto sm:w-auto"
+          >
+            <option disabled value="">Select service tag</option>
+            <option v-for="service in serviceTags" :key="service.id" :value="service.id">
+              {{ service.label }}
+            </option>
+          </select>
+          <select
             v-model="newPriority"
             class="h-11 w-full rounded-lg border border-[var(--color-border-default)] bg-[var(--color-bg-input)] px-3 py-2 text-sm text-[var(--color-text-primary)] focus:border-primary-500 focus:ring-1 focus:ring-primary-500 focus:outline-none sm:h-auto sm:w-auto sm:px-2"
           >
@@ -355,7 +385,7 @@ onMounted(loadTickets)
           </select>
           <button
             @click="handleCreate"
-            :disabled="creating || newTitle.length < 5 || newDescription.length < 10"
+            :disabled="creating || !newServiceTagId || newTitle.length < 5 || newDescription.length < 10"
             class="h-11 w-full rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:opacity-50 sm:h-auto sm:w-auto"
           >
             {{ creating ? 'Creating...' : 'Create Ticket' }}

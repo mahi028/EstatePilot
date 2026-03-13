@@ -1,6 +1,6 @@
 import json
 import pytest
-from app.models import db, User, UserRole, Ticket, TicketComment, TicketStatus, TicketPriority, Notification
+from app.models import db, User, UserRole, Ticket, TicketComment, TicketStatus, TicketPriority, Notification, TechnicianService
 
 
 # ===================================================
@@ -46,11 +46,13 @@ def _login(client, email, password="password123"):
     return resp.get_json()["access_token"]
 
 
-VALID_TICKET = {
-    "title": "Leaking faucet in kitchen",
-    "description": "The kitchen faucet has been dripping steadily since last week.",
-    "priority": "high",
-}
+def _valid_ticket(service_id):
+    return {
+        "title": "Leaking faucet in kitchen",
+        "description": "The kitchen faucet has been dripping steadily since last week.",
+        "priority": "high",
+        "service_tag_id": service_id,
+    }
 
 
 # ===================================================
@@ -116,35 +118,48 @@ def sample_ticket(db, managed_tenant):
     return t
 
 
+@pytest.fixture()
+def service_tag(db):
+    service = TechnicianService(code="test_plumbing", label="Test Plumbing")
+    db.session.add(service)
+    db.session.commit()
+    return service
+
+
 # ===================================================
 # CREATE TICKET
 # ===================================================
 
 class TestCreateTicket:
 
-    def test_create_success(self, client, mt_token, mgr):
-        resp = post_json(client, TICKETS_URL, VALID_TICKET, mt_token)
+    def test_create_success(self, client, mt_token, mgr, service_tag):
+        resp = post_json(client, TICKETS_URL, _valid_ticket(service_tag.id), mt_token)
         assert resp.status_code == 201
         body = resp.get_json()
         assert body["success"] is True
-        assert body["ticket"]["title"] == VALID_TICKET["title"]
+        assert body["ticket"]["title"] == _valid_ticket(service_tag.id)["title"]
         assert body["ticket"]["status"] == "open"
         assert body["ticket"]["priority"] == "high"
+        assert body["ticket"]["service_tag"]["id"] == service_tag.id
 
-    def test_create_defaults_priority_to_medium(self, client, mt_token):
-        data = {"title": "Broken lamp post", "description": "The lamp near the entrance is broken."}
+    def test_create_defaults_priority_to_medium(self, client, mt_token, service_tag):
+        data = {
+            "title": "Broken lamp post",
+            "description": "The lamp near the entrance is broken.",
+            "service_tag_id": service_tag.id,
+        }
         resp = post_json(client, TICKETS_URL, data, mt_token)
         assert resp.status_code == 201
         assert resp.get_json()["ticket"]["priority"] == "medium"
 
-    def test_create_notifies_manager(self, client, mt_token, mgr):
-        post_json(client, TICKETS_URL, VALID_TICKET, mt_token)
+    def test_create_notifies_manager(self, client, mt_token, mgr, service_tag):
+        post_json(client, TICKETS_URL, _valid_ticket(service_tag.id), mt_token)
         notifs = Notification.query.filter_by(user_id=mgr.id).all()
         assert len(notifs) == 1
         assert "Leaking faucet" in notifs[0].message
 
-    def test_create_without_manager_forbidden(self, client, ft_token):
-        resp = post_json(client, TICKETS_URL, VALID_TICKET, ft_token)
+    def test_create_without_manager_forbidden(self, client, ft_token, service_tag):
+        resp = post_json(client, TICKETS_URL, _valid_ticket(service_tag.id), ft_token)
         assert resp.status_code == 403
         assert "manager" in resp.get_json()["message"].lower()
 
@@ -160,25 +175,58 @@ class TestCreateTicket:
         assert resp.status_code == 400
         assert "description" in resp.get_json()["errors"]
 
-    def test_create_short_title(self, client, mt_token):
-        data = {**VALID_TICKET, "title": "Hi"}
+    def test_create_short_title(self, client, mt_token, service_tag):
+        data = {**_valid_ticket(service_tag.id), "title": "Hi"}
         resp = post_json(client, TICKETS_URL, data, mt_token)
         assert resp.status_code == 400
         assert "title" in resp.get_json()["errors"]
 
-    def test_create_short_description(self, client, mt_token):
-        data = {**VALID_TICKET, "description": "Short"}
+    def test_create_short_description(self, client, mt_token, service_tag):
+        data = {**_valid_ticket(service_tag.id), "description": "Short"}
         resp = post_json(client, TICKETS_URL, data, mt_token)
         assert resp.status_code == 400
         assert "description" in resp.get_json()["errors"]
 
-    def test_create_requires_tenant_role(self, client, mgr_token):
-        resp = post_json(client, TICKETS_URL, VALID_TICKET, mgr_token)
+    def test_create_requires_tenant_role(self, client, mgr_token, service_tag):
+        resp = post_json(client, TICKETS_URL, _valid_ticket(service_tag.id), mgr_token)
         assert resp.status_code == 403
 
     def test_create_requires_auth(self, client):
-        resp = post_json(client, TICKETS_URL, VALID_TICKET)
+        resp = post_json(client, TICKETS_URL, {"title": "x", "description": "y", "service_tag_id": "z"})
         assert resp.status_code == 401
+
+    def test_create_requires_service_tag(self, client, mt_token):
+        data = {
+            "title": "Door lock issue",
+            "description": "Main entrance lock has become difficult to turn.",
+            "priority": "medium",
+        }
+        resp = post_json(client, TICKETS_URL, data, mt_token)
+        assert resp.status_code == 400
+        assert "service_tag_id" in resp.get_json()["errors"]
+
+    def test_create_prevents_duplicate_active_ticket(self, client, mt_token, service_tag):
+        first = post_json(client, TICKETS_URL, _valid_ticket(service_tag.id), mt_token)
+        assert first.status_code == 201
+
+        second = post_json(client, TICKETS_URL, _valid_ticket(service_tag.id), mt_token)
+        assert second.status_code == 409
+        assert "already have an active ticket" in second.get_json()["message"].lower()
+
+    def test_create_allows_repeat_after_previous_ticket_done(self, client, mt_token, managed_tenant, service_tag):
+        ticket = Ticket(
+            title="Leaking faucet in kitchen",
+            description="The kitchen faucet has been dripping steadily since last week.",
+            priority=TicketPriority.HIGH,
+            status=TicketStatus.DONE,
+            service_tag_id=service_tag.id,
+            created_by=managed_tenant.id,
+        )
+        db.session.add(ticket)
+        db.session.commit()
+
+        resp = post_json(client, TICKETS_URL, _valid_ticket(service_tag.id), mt_token)
+        assert resp.status_code == 201
 
 
 # ===================================================
@@ -235,6 +283,26 @@ class TestListTickets:
         resp = get_json(client, TICKETS_URL)
         assert resp.status_code == 401
 
+    def test_list_supports_search_and_pagination(self, client, mt_token, managed_tenant, service_tag):
+        for index in range(5):
+            db.session.add(
+                Ticket(
+                    title=f"Kitchen issue {index}",
+                    description="The kitchen sink line appears blocked and needs service.",
+                    priority=TicketPriority.MEDIUM,
+                    created_by=managed_tenant.id,
+                    service_tag_id=service_tag.id,
+                )
+            )
+        db.session.commit()
+
+        resp = get_json(client, TICKETS_URL, mt_token, {"q": "kitchen issue", "page": 1, "page_size": 2})
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert len(body["tickets"]) == 2
+        assert body["pagination"]["total"] >= 5
+        assert body["pagination"]["page"] == 1
+
 
 # ===================================================
 # TICKET DETAIL
@@ -282,6 +350,16 @@ class TestTenantTicketActions:
         assert resp.status_code == 200
         assert db.session.get(Ticket, sample_ticket.id) is None
 
+    def test_delete_ticket_notifies_assigned_technician(self, client, mt_token, sample_ticket, tech):
+        sample_ticket.assigned_to = tech.id
+        db.session.commit()
+
+        resp = delete_json(client, f"{TICKETS_URL}/{sample_ticket.id}", mt_token)
+        assert resp.status_code == 200
+
+        tech_notifications = Notification.query.filter_by(user_id=tech.id).all()
+        assert any("deleted by tenant" in notification.message.lower() for notification in tech_notifications)
+
 
 class TestManagerTicketActions:
 
@@ -312,6 +390,39 @@ class TestManagerTicketActions:
         assert sample_ticket.status == TicketStatus.INVALID
         tenant_notifications = Notification.query.filter_by(user_id=managed_tenant.id).all()
         assert any("marked invalid" in notification.message for notification in tenant_notifications)
+
+    def test_manager_mark_invalid_notifies_assigned_technician(self, client, mgr_token, sample_ticket, tech):
+        sample_ticket.assigned_to = tech.id
+        db.session.commit()
+
+        resp = patch_json(client, f"{MANAGED_TICKETS_URL}/{sample_ticket.id}/invalid", {}, mgr_token)
+        assert resp.status_code == 200
+
+        tech_notifications = Notification.query.filter_by(user_id=tech.id).all()
+        assert any("marked invalid" in notification.message.lower() for notification in tech_notifications)
+
+
+class TestUserNotificationsAPI:
+
+    def test_user_notifications_support_search_unread_and_pagination(self, client, mgr, mgr_token):
+        for index in range(5):
+            notification = Notification(user_id=mgr.id, message=f"Ticket update {index}")
+            if index % 2 == 0:
+                notification.is_read = True
+            db.session.add(notification)
+        db.session.commit()
+
+        resp = get_json(
+            client,
+            "/api/notifications",
+            mgr_token,
+            {"q": "ticket update", "unread": "true", "page": 1, "page_size": 2},
+        )
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert len(body["notifications"]) == 2
+        assert all(item["is_read"] is False for item in body["notifications"])
+        assert body["pagination"]["total"] == 2
 
 
 # ===================================================

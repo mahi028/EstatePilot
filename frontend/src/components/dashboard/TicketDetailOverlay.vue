@@ -17,6 +17,13 @@ const props = defineProps({
   actionSubmitting: { type: Boolean, default: false },
   saveError: { type: String, default: '' },
   canComment: { type: Boolean, default: true },
+  showConversation: { type: Boolean, default: true },
+  showTechnicianActions: { type: Boolean, default: true },
+  bidMode: { type: Boolean, default: false },
+  bidPrice: { type: [String, Number], default: '' },
+  bidMessage: { type: String, default: '' },
+  bidSubmitting: { type: Boolean, default: false },
+  bidError: { type: String, default: '' },
   commentPlaceholder: { type: String, default: '' },
 })
 
@@ -33,6 +40,9 @@ const emit = defineEmits([
   'find-technician',
   'accept-ticket',
   'reject-ticket',
+  'update:bidPrice',
+  'update:bidMessage',
+  'submit-bid',
 ])
 
 const commentText = ref('')
@@ -64,7 +74,8 @@ const priorityColors = {
 const formattedStatus = computed(() => {
   const status = props.ticket?.status
   if (!status) return ''
-  if (props.viewerRole === 'technician' && status === 'assigned') return 'requested'
+  if (props.ticket?.technician_request_pending) return 'request pending'
+  if (props.viewerRole === 'technician' && status === 'assigned') return 'assigned'
   return status.replace('_', ' ')
 })
 
@@ -162,13 +173,16 @@ function imageUrl(filePath) {
               </article>
 
               <article class="rounded-2xl border border-slate-200 bg-white p-4">
-                <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Conversation</p>
-                <p class="mt-2 text-sm font-semibold text-slate-900">{{ ticket.comments?.length || 0 }} comments</p>
-                <p class="mt-1 text-xs text-slate-500">Thread stays with the ticket</p>
+                <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Service Tag</p>
+                <p class="mt-2 text-sm font-semibold text-slate-900">{{ ticket.service_tag?.label || 'Not set' }}</p>
+                <p class="mt-1 text-xs text-slate-500">{{ ticket.service_tag?.code || 'No service code' }}</p>
               </article>
             </div>
 
-            <article class="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
+            <article
+              v-if="viewerRole === 'manager' || viewerRole === 'tenant' || (viewerRole === 'technician' && showTechnicianActions) || saveError"
+              class="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5"
+            >
               <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Description</p>
@@ -218,6 +232,42 @@ function imageUrl(filePath) {
                     @change="emit('add-image', $event)"
                   />
                 </label>
+              </div>
+            </article>
+
+            <article v-if="bidMode" class="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
+              <div class="mb-3">
+                <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Place Bid</p>
+                <p class="mt-1 text-xs text-slate-500">Submit your estimate after reviewing this ticket.</p>
+              </div>
+
+              <div class="space-y-3">
+                <input
+                  :value="bidPrice"
+                  type="number"
+                  min="1"
+                  step="0.01"
+                  placeholder="Bid price"
+                  class="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                  @input="emit('update:bidPrice', $event.target.value)"
+                />
+                <textarea
+                  :value="bidMessage"
+                  rows="3"
+                  placeholder="Optional message"
+                  class="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                  @input="emit('update:bidMessage', $event.target.value)"
+                ></textarea>
+
+                <p v-if="bidError" class="text-xs text-rose-700">{{ bidError }}</p>
+
+                <button
+                  class="min-h-11 w-full rounded-full bg-primary-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-700 disabled:opacity-60"
+                  :disabled="bidSubmitting"
+                  @click="emit('submit-bid')"
+                >
+                  {{ bidSubmitting ? 'Submitting...' : 'Submit bid' }}
+                </button>
               </div>
             </article>
 
@@ -306,18 +356,18 @@ function imageUrl(filePath) {
                 </button>
 
                 <button
-                  v-if="viewerRole === 'technician'"
+                  v-if="viewerRole === 'technician' && showTechnicianActions"
                   class="min-h-11 w-full rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60 sm:min-h-0 sm:w-auto"
-                  :disabled="actionSubmitting || ticket.status !== 'assigned'"
+                  :disabled="actionSubmitting || !ticket.technician_request_pending"
                   @click="emit('accept-ticket')"
                 >
                   {{ actionSubmitting ? 'Updating...' : 'Accept request' }}
                 </button>
 
                 <button
-                  v-if="viewerRole === 'technician'"
+                  v-if="viewerRole === 'technician' && showTechnicianActions"
                   class="min-h-11 w-full rounded-full border border-slate-300 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-white disabled:opacity-60 sm:min-h-0 sm:w-auto"
-                  :disabled="actionSubmitting || ticket.status !== 'assigned'"
+                  :disabled="actionSubmitting || !ticket.technician_request_pending"
                   @click="emit('reject-ticket')"
                 >
                   {{ actionSubmitting ? 'Updating...' : 'Decline request' }}
@@ -327,7 +377,7 @@ function imageUrl(filePath) {
               <p v-if="saveError" class="mt-3 text-sm text-rose-700">{{ saveError }}</p>
             </article>
 
-            <article class="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
+            <article v-if="showConversation" class="rounded-3xl border border-slate-200 bg-white p-4 sm:p-5">
               <div class="mb-4 flex items-center justify-between gap-3">
                 <div>
                   <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Conversation</p>

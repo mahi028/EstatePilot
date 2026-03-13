@@ -37,7 +37,9 @@ def make_user(db):
     """Factory fixture to create and persist a user."""
     def _make(name="Test User", email="test@example.com",
               password="password123", role=UserRole.TENANT, manager_id=None):
-        user = User(name=name, email=email, role=role, manager_id=manager_id)
+        user = User(name=name, email=email, role=role)
+        if manager_id:
+            user.manager_id = manager_id
         user.set_password(password)
         db.session.add(user)
         db.session.commit()

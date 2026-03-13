@@ -1,6 +1,6 @@
 import json
 import pytest
-from app.models import db, User, UserRole, Ticket, TicketPriority
+from app.models import db, User, UserRole, Ticket, TicketPriority, TicketStatus
 
 
 # ===================================================
@@ -212,13 +212,40 @@ class TestProfile:
 
         resp = patch_json(client, PROFILE_URL, {
             "phone": "123-456-7890",
+            "pincode": "560001",
             "location": "Downtown",
             "bio": "Tenant who files clear issue reports.",
         }, token)
         assert resp.status_code == 200
         body = resp.get_json()
         assert body["user"]["phone"] == "123-456-7890"
+        assert body["user"]["pincode"] == "560001"
         assert body["user"]["location"] == "Downtown"
+
+    def test_profile_update_rejects_non_numeric_phone(self, client, make_user):
+        make_user(name="P3", email="p3@example.com", password="password123", role=UserRole.TENANT)
+        login = post_json(client, LOGIN_URL, {"email": "p3@example.com", "password": "password123"})
+        token = login.get_json()["access_token"]
+
+        resp = patch_json(client, PROFILE_URL, {
+            "phone": "abc123xyz",
+        }, token)
+        assert resp.status_code == 400
+        assert "Phone number" in resp.get_json()["message"]
+
+    def test_technician_profile_update_service_pincode(self, client, make_user):
+        make_user(name="TechPin", email="tech.pin@example.com", password="password123", role=UserRole.TECHNICIAN)
+        login = post_json(client, LOGIN_URL, {"email": "tech.pin@example.com", "password": "password123"})
+        token = login.get_json()["access_token"]
+
+        resp = patch_json(client, PROFILE_URL, {
+            "service_pincode": "700045",
+            "pincode": "700001",
+        }, token)
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["user"]["service_pincode"] == "700045"
+        assert body["user"]["pincode"] == "700001"
 
     def test_technician_services_catalog(self, client, make_user):
         make_user(name="TechSrv", email="techsrv@example.com", password="password123", role=UserRole.TECHNICIAN)
@@ -246,11 +273,19 @@ class TestTechnicianReviews:
         )
         self.tech = make_user(name="Tech", email="tech.review@example.com", password="password123", role=UserRole.TECHNICIAN)
         self.other_tenant = make_user(name="OtherTenant", email="other.tenant@example.com", password="password123", role=UserRole.TENANT)
+        self.team_tenant = make_user(
+            name="TeamTenant",
+            email="team.tenant@example.com",
+            password="password123",
+            role=UserRole.TENANT,
+            manager_id=self.manager.id,
+        )
 
         ticket = Ticket(
             title="Reviewable ticket",
             description="Issue worked on by technician",
             priority=TicketPriority.MEDIUM,
+            status=TicketStatus.DONE,
             created_by=self.tenant.id,
             assigned_to=self.tech.id,
         )
@@ -286,6 +321,45 @@ class TestTechnicianReviews:
         resp = client.post(
             f"/api/technicians/{self.tech.id}/reviews",
             data=json.dumps({"rating": 4, "comment": "Trying to review without shared ticket."}),
+            content_type="application/json",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403
+
+    def test_same_manager_other_tenant_cannot_review(self, client):
+        token = self._login(client, "team.tenant@example.com")
+        resp = client.post(
+            f"/api/technicians/{self.tech.id}/reviews",
+            data=json.dumps({"rating": 4, "comment": "Manager worked with them, but I did not."}),
+            content_type="application/json",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403
+
+    def test_incomplete_job_does_not_allow_review(self, client, make_user):
+        pending_tenant = make_user(
+            name="PendingTenant",
+            email="pending.tenant@example.com",
+            password="password123",
+            role=UserRole.TENANT,
+            manager_id=self.manager.id,
+        )
+        db.session.add(
+            Ticket(
+                title="Not done yet",
+                description="Technician assigned but not completed",
+                priority=TicketPriority.MEDIUM,
+                status=TicketStatus.ASSIGNED,
+                created_by=pending_tenant.id,
+                assigned_to=self.tech.id,
+            )
+        )
+        db.session.commit()
+
+        token = self._login(client, "pending.tenant@example.com")
+        resp = client.post(
+            f"/api/technicians/{self.tech.id}/reviews",
+            data=json.dumps({"rating": 3, "comment": "Trying to review before job is done."}),
             content_type="application/json",
             headers={"Authorization": f"Bearer {token}"},
         )

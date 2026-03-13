@@ -14,10 +14,15 @@ const mobileOpen = ref(false)
       <div class="flex h-16 items-center justify-between">
 
         <!-- Logo / Brand -->
-        <RouterLink to="/" class="flex items-center gap-2 text-xl font-bold tracking-tight text-primary-600">
+        <RouterLink  v-if="!auth.isAuthenticated" to="/" class="flex items-center gap-2 text-xl font-bold tracking-tight text-primary-600">
           <img src="/favicon.png" alt="EstatePilot" class="h-10 w-auto">
           <img src="/logo-text-transparent.png" alt="EstatePilot" class="h-6 w-auto">
         </RouterLink>
+        <RouterLink  v-else to="/dashboard" class="flex items-center gap-2 text-xl font-bold tracking-tight text-primary-600">
+          <img src="/favicon.png" alt="EstatePilot" class="h-10 w-auto">
+          <img src="/logo-text-transparent.png" alt="EstatePilot" class="h-6 w-auto">
+        </RouterLink>
+
 
         <!-- Desktop nav links -->
         <div class="hidden items-center gap-3 md:flex">
@@ -40,21 +45,21 @@ const mobileOpen = ref(false)
 
           <!-- Logged-in links -->
           <template v-else>
-            <RouterLink
+            <!-- <RouterLink
               :to="`/profile/${auth.user?.id}`"
               class="rounded-lg px-4 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-primary)]"
             >
               Profile
-            </RouterLink>
+            </RouterLink> -->
 
-            <RouterLink
+            <!-- <RouterLink
               to="/dashboard"
               class="rounded-lg px-4 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-primary)]"
             >
               Dashboard
-            </RouterLink>
+            </RouterLink> -->
 
-            <span class="text-sm text-[var(--color-text-muted)]">{{ auth.user?.name }}</span>
+            <!-- <span class="text-sm text-[var(--color-text-muted)]">{{ auth.user?.name }}</span> -->
 
             <button
               @click="auth.logout()"
@@ -102,21 +107,21 @@ const mobileOpen = ref(false)
       </template>
 
       <template v-else>
-        <RouterLink
+        <!-- <RouterLink
           :to="`/profile/${auth.user?.id}`"
           class="block rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-primary)]"
           @click="mobileOpen = false"
         >
           Profile
-        </RouterLink>
-
+        </RouterLink> -->
+<!--
         <RouterLink
           to="/dashboard"
           class="block rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-primary)]"
           @click="mobileOpen = false"
         >
           Dashboard
-        </RouterLink>
+        </RouterLink> -->
 
         <button
           @click="auth.logout(); mobileOpen = false"

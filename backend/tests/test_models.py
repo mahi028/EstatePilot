@@ -1,6 +1,6 @@
 import pytest
 from app.models import (
-    db, User, UserRole, Ticket, TicketStatus, TicketPriority,
+    db, Users, UserRole, TenantProfile, ManagerProfile, TechnicianProfile, Ticket, TicketStatus, TicketPriority,
     TicketImage, ActivityLog, Notification,
 )
 
@@ -56,6 +56,37 @@ class TestManagerTenantRelationship:
 
     def test_manager_has_no_manager(self, manager):
         assert manager.manager_id is None
+
+
+class TestRoleSpecificProfiles:
+
+    def test_users_model_exists_and_is_used(self, manager):
+        assert isinstance(manager, Users)
+
+    def test_tenant_profile_created_when_manager_assigned(self, db, tenant):
+        db.session.refresh(tenant)
+        assert tenant.tenant_profile is not None
+        assert isinstance(tenant.tenant_profile, TenantProfile)
+        assert tenant.tenant_profile.manager_id == tenant.manager.id
+
+    def test_manager_profile_can_be_created(self, db, manager):
+        if manager.manager_profile is None:
+            manager.manager_profile = ManagerProfile(user_id=manager.id)
+            db.session.commit()
+        assert manager.manager_profile is not None
+
+    def test_technician_profile_proxy_fields(self, db, technician):
+        technician.years_experience = 6
+        technician.base_price = 125.0
+        technician.technician_headline = "HVAC specialist"
+        db.session.commit()
+
+        db.session.refresh(technician)
+        assert technician.technician_profile is not None
+        assert isinstance(technician.technician_profile, TechnicianProfile)
+        assert technician.years_experience == 6
+        assert technician.base_price == 125.0
+        assert technician.technician_headline == "HVAC specialist"
 
 
 class TestUserRepr:

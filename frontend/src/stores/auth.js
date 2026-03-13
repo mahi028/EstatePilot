@@ -20,6 +20,15 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('user', JSON.stringify(u))
   }
 
+  function setUser(u) {
+    if (!u) {
+      user.value = null
+      localStorage.removeItem('user')
+      return
+    }
+    _saveUser(u)
+  }
+
   async function register(payload) {
     const { data } = await api.post('/auth/register', payload)
     _saveTokens(data)
@@ -41,13 +50,12 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function logout() {
-    user.value = null
+    setUser(null)
     accessToken.value = null
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
-    localStorage.removeItem('user')
     router.push({ name: 'login' })
   }
 
-  return { user, accessToken, isAuthenticated, register, login, fetchProfile, logout }
+  return { user, accessToken, isAuthenticated, register, login, fetchProfile, setUser, logout }
 })
