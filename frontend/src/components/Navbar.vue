@@ -30,7 +30,7 @@ const mobileOpen = ref(false)
           <template v-if="!auth.isAuthenticated">
             <RouterLink
               to="/login"
-              class="rounded-lg px-4 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-primary)]"
+              class="rounded-lg px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10 hover:text-white"
             >
               Log in
             </RouterLink>
@@ -63,16 +63,33 @@ const mobileOpen = ref(false)
 
             <button
               @click="auth.logout()"
-              class="rounded-lg border border-[var(--color-border-default)] px-4 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-danger-50 hover:text-danger-600"
+              class="rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-200 transition hover:bg-rose-500/10 hover:text-rose-300"
             >
               Log out
             </button>
           </template>
         </div>
 
-        <!-- Mobile hamburger -->
+        <!-- Mobile logged-out actions -->
+        <div v-if="!auth.isAuthenticated" class="flex items-center gap-2 md:hidden">
+          <RouterLink
+            to="/login"
+            class="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:bg-white/10"
+          >
+            Log in
+          </RouterLink>
+          <RouterLink
+            to="/register"
+            class="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-primary-700"
+          >
+            Register
+          </RouterLink>
+        </div>
+
+        <!-- Mobile hamburger (authenticated only) -->
         <button
-          class="inline-flex items-center justify-center rounded-lg p-2 text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-elevated)] md:hidden"
+          v-else
+          class="inline-flex items-center justify-center rounded-lg p-2 text-slate-200 transition hover:bg-white/10 md:hidden"
           @click="mobileOpen = !mobileOpen"
           aria-label="Toggle menu"
         >
@@ -87,26 +104,7 @@ const mobileOpen = ref(false)
     </div>
 
     <!-- Mobile menu -->
-    <div v-if="mobileOpen" class="border-t border-[var(--color-border-default)] px-4 pb-4 pt-2 md:hidden">
-      <template v-if="!auth.isAuthenticated">
-        <RouterLink
-          to="/login"
-          class="block rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-primary)]"
-          @click="mobileOpen = false"
-        >
-          Log in
-        </RouterLink>
-
-        <RouterLink
-          to="/register"
-          class="mt-1 block rounded-lg bg-primary-600 px-3 py-2 text-center text-sm font-medium text-white transition hover:bg-primary-700"
-          @click="mobileOpen = false"
-        >
-          Register
-        </RouterLink>
-      </template>
-
-      <template v-else>
+    <div v-if="auth.isAuthenticated && mobileOpen" class="border-t border-[var(--color-border-default)] px-4 pb-4 pt-2 md:hidden">
         <!-- <RouterLink
           :to="`/profile/${auth.user?.id}`"
           class="block rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-text-primary)]"
@@ -125,11 +123,10 @@ const mobileOpen = ref(false)
 
         <button
           @click="auth.logout(); mobileOpen = false"
-          class="mt-1 block w-full rounded-lg border border-[var(--color-border-default)] px-3 py-2 text-center text-sm font-medium text-[var(--color-text-secondary)] transition hover:bg-danger-50 hover:text-danger-600"
+          class="mt-1 block w-full rounded-lg border border-slate-600 px-3 py-2 text-center text-sm font-medium text-slate-200 transition hover:bg-rose-500/10 hover:text-rose-300"
         >
           Log out
         </button>
-      </template>
     </div>
   </nav>
 </template>

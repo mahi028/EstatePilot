@@ -32,6 +32,8 @@ const bidPrice = ref('')
 const bidMessage = ref('')
 const bidSubmitting = ref(false)
 const bidError = ref('')
+const selectedImageUrl = ref('')
+const selectedImageName = ref('')
 
 const canComment = computed(() => {
   if (isPreview.value || !ticket.value) return false
@@ -138,6 +140,16 @@ async function updateStatus(status) {
   }
 }
 
+function openImagePreview(filePath) {
+  selectedImageUrl.value = getUploadUrl(filePath)
+  selectedImageName.value = filePath.split('/').pop() || 'Attachment'
+}
+
+function closeImagePreview() {
+  selectedImageUrl.value = ''
+  selectedImageName.value = ''
+}
+
 onMounted(loadTicket)
 </script>
 
@@ -154,7 +166,15 @@ onMounted(loadTicket)
       <article class="rounded-2xl border border-[var(--color-border-default)] bg-[var(--color-bg-card)] p-4">
         <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">Attachments</p>
         <div v-if="ticket.images?.length" class="mt-3 grid gap-3 sm:grid-cols-2">
-          <img v-for="img in ticket.images" :key="img.id" :src="getUploadUrl(img.file_path)" alt="ticket" class="h-40 w-full rounded-xl object-cover" />
+          <button
+            v-for="img in ticket.images"
+            :key="img.id"
+            type="button"
+            class="block overflow-hidden rounded-xl border border-[var(--color-border-default)]"
+            @click="openImagePreview(img.file_path)"
+          >
+            <img :src="getUploadUrl(img.file_path)" alt="ticket" class="h-40 w-full rounded-xl object-cover" />
+          </button>
         </div>
         <p v-else class="mt-3 text-sm text-[var(--color-text-secondary)]">No attachments.</p>
       </article>
@@ -225,6 +245,18 @@ onMounted(loadTicket)
       </article>
 
       <TicketActivityTimeline v-if="!isPreview" :logs="ticket.activity_logs || []" />
+
+      <div v-if="selectedImageUrl" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4 sm:p-8" @click.self="closeImagePreview">
+        <div class="relative flex h-[82vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+          <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+            <p class="truncate text-sm font-medium text-slate-800">{{ selectedImageName }}</p>
+            <button type="button" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100" @click="closeImagePreview">Close</button>
+          </div>
+          <div class="flex min-h-0 flex-1 items-center justify-center bg-slate-50 p-3 sm:p-5">
+            <img :src="selectedImageUrl" :alt="selectedImageName" class="max-h-full max-w-full object-contain" />
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>

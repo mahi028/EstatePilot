@@ -45,6 +45,12 @@ const router = createRouter({
       component: () => import('@/views/TicketDetailPage.vue'),
       meta: { requiresAuth: true },
     },
+    {
+      path: '/service-area',
+      name: 'service-area',
+      component: () => import('@/views/ServiceAreaPage.vue'),
+      meta: { requiresAuth: true },
+    },
   ],
 })
 

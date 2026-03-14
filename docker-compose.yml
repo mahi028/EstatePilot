@@ -26,7 +26,6 @@ services:
       - backend_uploads:/app/app/static/upload
     command: >
       sh -c "uv run flask --app main db upgrade &&
-             uv run python scripts/seed_demo_data.py &&
              uv run flask --app main run --host 0.0.0.0 --port 5000"
 
   frontend:

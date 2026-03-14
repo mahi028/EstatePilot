@@ -47,6 +47,8 @@ const emit = defineEmits([
 ])
 
 const commentText = ref('')
+const selectedImageUrl = ref('')
+const selectedImageName = ref('')
 
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
@@ -102,6 +104,16 @@ function submitComment() {
 
 function imageUrl(filePath) {
   return getUploadUrl(filePath)
+}
+
+function openImagePreview(filePath) {
+  selectedImageUrl.value = imageUrl(filePath)
+  selectedImageName.value = filePath.split('/').pop() || 'Attachment'
+}
+
+function closeImagePreview() {
+  selectedImageUrl.value = ''
+  selectedImageName.value = ''
 }
 </script>
 
@@ -294,11 +306,13 @@ function imageUrl(filePath) {
                   class="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50"
                 >
                   <div class="relative aspect-4/3 bg-slate-200">
-                    <img
-                      :src="imageUrl(image.file_path)"
-                      :alt="image.file_path.split('/').pop()"
-                      class="h-full w-full object-cover"
-                    />
+                    <button type="button" class="h-full w-full" @click="openImagePreview(image.file_path)">
+                      <img
+                        :src="imageUrl(image.file_path)"
+                        :alt="image.file_path.split('/').pop()"
+                        class="h-full w-full object-cover"
+                      />
+                    </button>
                     <button
                       v-if="canEditTicket"
                       class="absolute right-3 top-3 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-rose-700 shadow-sm transition hover:bg-white"
@@ -442,6 +456,18 @@ function imageUrl(filePath) {
               </div>
             </article>
           </section>
+        </div>
+      </div>
+
+      <div v-if="selectedImageUrl" class="absolute inset-3 z-40 flex items-center justify-center rounded-2xl bg-slate-950/80 p-3 sm:inset-6 sm:p-5" @click.self="closeImagePreview">
+        <div class="relative flex h-full w-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+          <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+            <p class="truncate text-sm font-medium text-slate-800">{{ selectedImageName }}</p>
+            <button type="button" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100" @click="closeImagePreview">Close</button>
+          </div>
+          <div class="flex min-h-0 flex-1 items-center justify-center bg-slate-50 p-3 sm:p-5">
+            <img :src="selectedImageUrl" :alt="selectedImageName" class="max-h-full max-w-full object-contain" />
+          </div>
         </div>
       </div>
     </div>

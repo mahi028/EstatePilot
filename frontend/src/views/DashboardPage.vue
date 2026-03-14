@@ -23,7 +23,7 @@ const links = computed(() => {
     { to: `/profile/${auth.user?.id || ''}`, label: 'My Profile', icon: 'profile' },
   ]
   if (role === 'manager') return [...base, { to: '/tickets', label: 'Managed Workflow', icon: 'workflow' }]
-  if (role === 'technician') return [...base, { to: '/tickets?scope=service-area', label: 'Bidding Queue', icon: 'bid' }]
+  if (role === 'technician') return [...base, { to: '/service-area', label: 'Service Area Opportunities', icon: 'bid' }]
   return base
 })
 

@@ -16,7 +16,22 @@ export const removeManagedTenant = (tenantId) => api.delete(`/manager/tenants/${
 
 // ── Tenant endpoints ──
 export const fetchTenantTickets = (params = {}) => api.get('/tenant/tickets', { params })
-export const createTicket = (payload) => api.post('/tenant/tickets', payload)
+export const createTicket = (payload, files = []) => {
+  if (!files?.length) return api.post('/tenant/tickets', payload)
+
+  const formData = new FormData()
+  formData.append('title', payload.title)
+  formData.append('description', payload.description)
+  formData.append('priority', payload.priority)
+  formData.append('service_tag_id', payload.service_tag_id)
+  for (const file of files) {
+    formData.append('images', file)
+  }
+
+  return api.post('/tenant/tickets', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
 export const fetchTicketDetail = (ticketId) => api.get(`/tenant/tickets/${ticketId}`)
 export const updateTicket = (ticketId, payload) => api.patch(`/tenant/tickets/${ticketId}`, payload)
 export const deleteTicket = (ticketId) => api.delete(`/tenant/tickets/${ticketId}`)

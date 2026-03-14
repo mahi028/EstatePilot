@@ -5,7 +5,7 @@ from sqlalchemy import func
 
 from app.models import (
     db, User, TenantProfile, Ticket, TicketBid, TicketImage, TicketComment, TicketStatus, TicketPriority,
-    ActivityLog, Notification, TechnicianService, UserRole,
+    ActivityLog, Notification, TechnicianService, UserRole, ManagementInvitation, InvitationStatus,
 )
 from app.api.auth import _ensure_predefined_services
 from app.forms import CreateTicketForm
@@ -181,6 +181,19 @@ def _get_ticket_for_manager(ticket_id):
     creator = db.session.get(User, ticket.created_by) if ticket else None
     if not ticket or not creator or creator.manager_id != current_user.id:
         return None
+
+    # If the manager-tenant relationship was established via invitation,
+    # restrict visibility to tickets created after that acceptance time.
+    accepted_since = db.session.execute(
+        db.select(func.max(ManagementInvitation.updated_at)).filter(
+            ManagementInvitation.manager_id == current_user.id,
+            ManagementInvitation.tenant_id == creator.id,
+            ManagementInvitation.status == InvitationStatus.ACCEPTED,
+        )
+    ).scalar_one()
+    if accepted_since and ticket.created_at and ticket.created_at < accepted_since:
+        return None
+
     return ticket
 
 
@@ -226,7 +239,8 @@ class TenantTicketsAPI(Resource):
 
         _ensure_predefined_services()
 
-        form = CreateTicketForm(data=request.json)
+        payload = request.get_json(silent=True) if request.is_json else request.form
+        form = CreateTicketForm(data=payload)
 
         if not form.validate():
             return {"success": False, "errors": form.errors}, 400
@@ -264,6 +278,30 @@ class TenantTicketsAPI(Resource):
         ticket.service_tag_id = service_tag.id
 
         db.session.add(ticket)
+        db.session.flush()
+
+        uploaded_count = 0
+        files = request.files.getlist("images")
+        if not files and "image" in request.files:
+            files = [request.files["image"]]
+
+        if files:
+            uploader = get_uploader(
+                current_app.config["UPLOAD_FOLDER"],
+                current_app.config["ALLOWED_IMAGE_EXTENSIONS"],
+            )
+            for file in files:
+                if not file or not getattr(file, "filename", ""):
+                    continue
+                file_path = uploader.save(file)
+                db.session.add(TicketImage(ticket=ticket, file_path=file_path))
+                uploaded_count += 1
+            if uploaded_count:
+                ActivityLog.create(
+                    ticket_id=ticket.id,
+                    user_id=current_user.id,
+                    action=f"Uploaded {uploaded_count} image(s) on ticket creation",
+                )
 
         # Notify the tenant's manager
         Notification.create(
@@ -271,7 +309,17 @@ class TenantTicketsAPI(Resource):
             message=f"New ticket '{ticket.title}' created by {current_user.name}",
         )
 
-        db.session.commit()
+        try:
+            db.session.commit()
+        except ValueError as e:
+            db.session.rollback()
+            return {"success": False, "message": str(e)}, 400
+        except Exception as e:
+            db.session.rollback()
+            return {
+                "success": False,
+                "message": f"Failed to create ticket: {str(e)}",
+            }, 500
 
         return {
             "success": True,
@@ -446,11 +494,28 @@ class ManagedTicketsAPI(Resource):
         service_tag_id = request.args.get("service_tag_id", "").strip() or None
         page, page_size = _pagination_args(default_size=10)
 
+        accepted_since_subquery = (
+            db.select(func.max(ManagementInvitation.updated_at))
+            .filter(
+                ManagementInvitation.manager_id == current_user.id,
+                ManagementInvitation.tenant_id == User.id,
+                ManagementInvitation.status == InvitationStatus.ACCEPTED,
+            )
+            .correlate(User)
+            .scalar_subquery()
+        )
+
         query = (
             db.select(Ticket)
             .join(User, Ticket.created_by == User.id)
             .join(TenantProfile, TenantProfile.user_id == User.id)
             .filter(TenantProfile.manager_id == current_user.id)
+            .filter(
+                db.or_(
+                    accepted_since_subquery.is_(None),
+                    Ticket.created_at >= accepted_since_subquery,
+                )
+            )
         )
 
         if status_filter:

@@ -28,6 +28,8 @@ const editPriority = ref('medium')
 const saving = ref(false)
 const addingImage = ref(false)
 const actionSubmitting = ref(false)
+const selectedImageUrl = ref('')
+const selectedImageName = ref('')
 
 async function loadTicket() {
   loading.value = true
@@ -138,6 +140,16 @@ async function removeTicket() {
   }
 }
 
+function openImagePreview(filePath) {
+  selectedImageUrl.value = getUploadUrl(filePath)
+  selectedImageName.value = filePath.split('/').pop() || 'Attachment'
+}
+
+function closeImagePreview() {
+  selectedImageUrl.value = ''
+  selectedImageName.value = ''
+}
+
 onMounted(loadTicket)
 watch(() => route.params.ticketId, (value) => {
   ticketId.value = String(value || '')
@@ -226,7 +238,9 @@ watch(() => route.params.ticketId, (value) => {
         </div>
         <div v-if="ticket.images?.length" class="mt-3 grid gap-3 sm:grid-cols-2">
           <div v-for="img in ticket.images" :key="img.id" class="overflow-hidden rounded-xl border border-[var(--color-border-default)] bg-[var(--color-bg-elevated)]">
-            <img :src="getUploadUrl(img.file_path)" alt="ticket" class="h-40 w-full object-cover" />
+            <button type="button" class="block w-full" @click="openImagePreview(img.file_path)">
+              <img :src="getUploadUrl(img.file_path)" alt="ticket" class="h-40 w-full object-cover" />
+            </button>
             <div class="flex items-center justify-between gap-3 p-3">
               <p class="truncate text-xs text-[var(--color-text-secondary)]">{{ img.file_path.split('/').pop() }}</p>
               <button type="button" class="text-xs font-medium text-rose-700" @click="removeImage(img.id)">Remove</button>
@@ -255,6 +269,18 @@ watch(() => route.params.ticketId, (value) => {
       </article>
 
       <TicketActivityTimeline :logs="ticket.activity_logs || []" />
+
+      <div v-if="selectedImageUrl" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4 sm:p-8" @click.self="closeImagePreview">
+        <div class="relative flex h-[82vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+          <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+            <p class="truncate text-sm font-medium text-slate-800">{{ selectedImageName }}</p>
+            <button type="button" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100" @click="closeImagePreview">Close</button>
+          </div>
+          <div class="flex min-h-0 flex-1 items-center justify-center bg-slate-50 p-3 sm:p-5">
+            <img :src="selectedImageUrl" :alt="selectedImageName" class="max-h-full max-w-full object-contain" />
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
